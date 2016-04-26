@@ -1,0 +1,236 @@
+-module(ox_thrift_protocol_binary).
+
+-include("ox_thrift_internal.hrl").
+
+-export([ write/1
+        , read/2
+        ]).
+
+%% -define(DEBUG_READ, true).
+
+%% There is an asymmetry to the `write/1' and `read/2' interfaces.  `write/1'
+%% returns an iolist for the converted data, which is expected to be
+%% integrated into a larger iolist for the entire message, while `read/2'
+%% parses the data from a binary buffer and returns the parsed data and the
+%% remaining buffer.
+
+-define(VERSION_MASK, 16#FFFF0000).
+-define(VERSION_1, 16#80010000).
+-define(TYPE_MASK, 16#000000ff).
+
+write (#protocol_message_begin{
+          name = Name,
+          type = Type,
+          seqid = Seqid}) ->
+  %% Write a version 1 message header.
+  [ write({?tType_I32, ?VERSION_1 bor Type}), write({?tType_STRING, Name}), write({?tType_I32, Seqid}) ];
+
+write (message_end) ->
+  [];
+
+write (#protocol_field_begin{
+          name = _Name,
+          type = Type,
+          id = Id}) ->
+  [ write({?tType_BYTE, Type}), write({?tType_I16, Id}) ];
+
+write (field_stop) ->
+  write({?tType_BYTE, ?tType_STOP});
+
+write (field_end) ->
+  [];
+
+write (#protocol_map_begin{
+          ktype = KType,
+          vtype = VType,
+          size = Size}) ->
+  [ write({?tType_BYTE, KType}), write({?tType_BYTE, VType}), write({?tType_I32, Size}) ];
+
+write (map_end) ->
+  [];
+
+write (#protocol_list_begin{
+          etype = Etype,
+          size = Size}) ->
+  [ write({?tType_BYTE, Etype}), write({?tType_I32, Size}) ];
+
+write (list_end) ->
+  [];
+
+write (#protocol_set_begin{
+          etype = Etype,
+          size = Size}) ->
+  [ write({?tType_BYTE, Etype}), write({?tType_I32, Size}) ];
+
+write (set_end) ->
+  [];
+
+write (#protocol_struct_begin{}) ->
+  [];
+
+write (struct_end) ->
+  [];
+
+write ({?tType_BOOL, true}) ->
+  write({?tType_BYTE, 1});
+
+write ({?tType_BOOL, false}) ->
+  write({?tType_BYTE, 0});
+
+write ({?tType_BYTE, Byte}) ->
+  <<Byte:8/big-signed>>;
+
+write ({?tType_I16, I16}) ->
+  <<I16:16/big-signed>>;
+
+write ({?tType_I32, I32}) ->
+  <<I32:32/big-signed>>;
+
+write ({?tType_I64, I64}) ->
+  <<I64:64/big-signed>>;
+
+write ({?tType_DOUBLE, Double}) ->
+  <<Double:64/big-signed-float>>;
+
+write ({?tType_STRING, Str}) when is_list(Str) ->
+  Bin = list_to_binary(Str),
+  BinLen = size(Bin),
+  <<BinLen:32/big-signed, Bin/binary>>;
+
+write ({?tType_STRING, Bin}) when is_binary(Bin) ->
+  BinLen = size(Bin),
+  <<BinLen:32/big-signed, Bin/binary>>.
+
+
+-ifdef(DEBUG_READ).
+read(Type, DataIn) ->
+  Ret = {Val, DataOut} = readx(Type, DataIn),
+  io:format("read(~p) -> {~p, ~p}\n", [ Type, Val, DataOut ]),
+  Ret.
+-define(READ, read_real).
+-else. %% ! DEBUG_READ
+-define(READ, read).
+-endif. %% ! DEBUG_READ
+
+
+?READ (message_begin, Data0) ->
+  {Initial, Data1} = read(ui32, Data0),
+  case Initial band ?VERSION_MASK of
+    ?VERSION_1 ->
+      Type = Initial band ?TYPE_MASK,
+      {Name, Data2} = read(?tType_STRING, Data1),
+      {SeqId, Data3} = read(?tType_I32, Data2),
+      {#protocol_message_begin{name = Name, type = Type, seqid = SeqId}, Data3};
+    0 ->
+      %% No version header; read the old way.
+      {Name, Data2}  = read_data(Initial, Data1),
+      {Type, Data3}  = read(?tType_BYTE, Data2),
+      {SeqId, Data4} = read(?tType_I32, Data3),
+      {#protocol_message_begin{name = Name, type = Type, seqid = SeqId}, Data4};
+    _ ->
+      %% Unexpected version number.
+      error({bad_binary_protocol_version, Initial})
+  end;
+
+?READ (message_end, Data) ->
+  {ok, Data};
+
+?READ (struct_begin, Data) ->
+  {ok, Data};
+
+?READ (struct_end, Data) ->
+  {ok, Data};
+
+?READ (field_begin, Data0) ->
+  {Type, Data1} = read(?tType_BYTE, Data0),
+  case Type of
+    ?tType_STOP ->
+      {#protocol_field_begin{type = Type}, Data1};
+    _ ->
+      {Id, Data2} = read(?tType_I16, Data1),
+      {#protocol_field_begin{type = Type, id = Id}, Data2}
+  end;
+
+?READ (field_end, Data) ->
+  {ok, Data};
+
+?READ (field_stop, Data0) ->
+  {?tType_STOP, Data1} = read(?tType_BYTE, Data0),
+  {ok, Data1};
+
+?READ (map_begin, Data0) ->
+  {KType, Data1} = read(?tType_BYTE, Data0),
+  {VType, Data2} = read(?tType_BYTE, Data1),
+  {Size, Data3} = read(?tType_I32, Data2),
+  {#protocol_map_begin{ktype = KType, vtype = VType, size = Size}, Data3};
+
+?READ (map_end, Data) ->
+  {ok, Data};
+
+?READ (list_begin, Data0) ->
+  {EType, Data1} = read(?tType_BYTE, Data0),
+  {Size, Data2} = read(?tType_I32, Data1),
+  {#protocol_list_begin{etype = EType, size = Size}, Data2};
+
+?READ (list_end, Data) ->
+  {ok, Data};
+
+?READ (set_begin, Data0) ->
+  {EType, Data1} = read(?tType_BYTE, Data0),
+  {Size, Data2} = read(?tType_I32, Data1),
+  {#protocol_set_begin{etype = EType, size = Size}, Data2};
+
+?READ (set_end, Data) ->
+  {ok, Data};
+
+?READ (?tType_BOOL, Data0) ->
+  {Bool, Data1} = read(?tType_BYTE, Data0),
+  {Bool =/= 0, Data1};
+
+?READ (?tType_BYTE, Data0) ->
+  <<Val:8/integer-signed-big, Data1/binary>> = Data0,
+  {Val, Data1};
+
+?READ (?tType_I16, Data0) ->
+  <<Val:16/integer-signed-big, Data1/binary>> = Data0,
+  {Val, Data1};
+
+?READ (?tType_I32, Data0) ->
+  <<Val:32/integer-signed-big, Data1/binary>> = Data0,
+  {Val, Data1};
+
+?READ (?tType_I64, Data0) ->
+  <<Val:64/integer-signed-big, Data1/binary>> = Data0,
+  {Val, Data1};
+
+?READ (?tType_DOUBLE, Data0) ->
+  <<Val:64/float-signed-big, Data1/binary>> = Data0,
+  {Val, Data1};
+
+?READ (?tType_STRING, Data0) ->
+  {Size, Data1} = read(?tType_I32, Data0),
+  read_data(Size, Data1);
+
+?READ (ui32, Data0) ->
+  %% Used for reading the message version header.
+  <<Val:32/integer-unsigned-big, Data1/binary>> = Data0,
+  {Val, Data1}.
+
+
+-spec read_data(Size::integer(), DataIn::binary()) -> {Value::binary(), DataOut::binary()}.
+read_data (Size, Data0) ->
+  case Size of
+    0 -> {<<>>, Data0};
+    _ -> <<Val:Size/binary, Data1/binary>> = Data0,
+         {Val, Data1}
+  end.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
+-ifdef(EUNIT).
+
+-endif. %% EUNIT
