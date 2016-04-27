@@ -230,4 +230,54 @@ read_data (Size, Data0) ->
 
 -ifdef(EUNIT).
 
+message_test () ->
+  P = #protocol_message_begin{name = <<"test">>, type = ?tMessageType_CALL, seqid = 16#7FFFFFF0},
+  ?assertEqual({P, <<>>}, read(message_begin, iolist_to_binary(write(P)))),
+
+  %% Old-style message header.
+  ?assertEqual({P, <<>>}, read(message_begin, <<4:32/big, "test", ?tMessageType_CALL, 16#7FFFFFF0:32/big>>)).
+
+field_test () ->
+  P = #protocol_field_begin{type = ?tType_I32, id = 16#7FF0},
+  ?assertEqual({P, <<>>}, read(field_begin, iolist_to_binary(write(P)))),
+
+  ?assertEqual({ok, <<>>}, read(field_end, iolist_to_binary(write(field_end)))).
+
+map_test () ->
+  P = #protocol_map_begin{ktype = ?tType_BYTE, vtype = ?tType_STRING, size = 16#7FFFFFF1},
+  ?assertEqual({P, <<>>}, read(map_begin, iolist_to_binary(write(P)))),
+
+  ?assertEqual({ok, <<>>}, read(map_end, iolist_to_binary(write(map_end)))).
+
+list_test () ->
+  P = #protocol_list_begin{etype = ?tType_BYTE, size = 16#7FFFFFF2},
+  ?assertEqual({P, <<>>}, read(list_begin, iolist_to_binary(write(P)))),
+
+  ?assertEqual({ok, <<>>}, read(list_end, iolist_to_binary(write(list_end)))).
+
+set_test () ->
+  P = #protocol_set_begin{etype = ?tType_BYTE, size = 16#7FFFFFF3},
+  ?assertEqual({P, <<>>}, read(set_begin, iolist_to_binary(write(P)))),
+
+  ?assertEqual({ok, <<>>}, read(set_end, iolist_to_binary(write(set_end)))).
+
+basic_test () ->
+  B = 16#7F,
+  ?assertEqual({B, <<>>}, read(?tType_BYTE, iolist_to_binary(write({?tType_BYTE, B})))),
+
+  S = 16#7FFF,
+  ?assertEqual({S, <<>>}, read(?tType_I16, iolist_to_binary(write({?tType_I16, S})))),
+
+  I = 16#7FFFFFFF,
+  ?assertEqual({I, <<>>}, read(?tType_I32, iolist_to_binary(write({?tType_I32, I})))),
+
+  F = 1234.25,
+  ?assertEqual({F, <<>>}, read(?tType_DOUBLE, iolist_to_binary(write({?tType_DOUBLE, F})))),
+
+  SB = <<"hello, world">>,
+  ?assertEqual({SB, <<>>}, read(?tType_STRING, iolist_to_binary(write({?tType_STRING, SB})))),
+
+  SL = "hello, world",
+  ?assertEqual({SB, <<>>}, read(?tType_STRING, iolist_to_binary(write({?tType_STRING, SL})))).
+
 -endif. %% EUNIT
