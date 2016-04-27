@@ -32,10 +32,10 @@ write (#protocol_field_begin{
           name = _Name,
           type = Type,
           id = Id}) ->
-  [ write({?tType_BYTE, Type}), write({?tType_I16, Id}) ];
+  <<Type:8/big-signed, Id:16/big-signed>>;
 
 write (field_stop) ->
-  write({?tType_BYTE, ?tType_STOP});
+  <<?tType_STOP:8/big-signed>>;
 
 write (field_end) ->
   [];
@@ -44,23 +44,23 @@ write (#protocol_map_begin{
           ktype = KType,
           vtype = VType,
           size = Size}) ->
-  [ write({?tType_BYTE, KType}), write({?tType_BYTE, VType}), write({?tType_I32, Size}) ];
+  <<KType:8/big-signed, VType:8/big-signed, Size:32/big-signed>>;
 
 write (map_end) ->
   [];
 
 write (#protocol_list_begin{
-          etype = Etype,
+          etype = EType,
           size = Size}) ->
-  [ write({?tType_BYTE, Etype}), write({?tType_I32, Size}) ];
+  <<EType:8/big-signed, Size:32/big-signed>>;
 
 write (list_end) ->
   [];
 
 write (#protocol_set_begin{
-          etype = Etype,
+          etype = EType,
           size = Size}) ->
-  [ write({?tType_BYTE, Etype}), write({?tType_I32, Size}) ];
+  <<EType:8/big-signed, Size:32/big-signed>>;
 
 write (set_end) ->
   [];
@@ -72,10 +72,10 @@ write (struct_end) ->
   [];
 
 write ({?tType_BOOL, true}) ->
-  write({?tType_BYTE, 1});
+  <<1:8/big-signed>>;
 
 write ({?tType_BOOL, false}) ->
-  write({?tType_BYTE, 0});
+  <<0:8/big-signed>>;
 
 write ({?tType_BYTE, Byte}) ->
   <<Byte:8/big-signed>>;
@@ -142,49 +142,46 @@ read(Type, DataIn) ->
   {ok, Data};
 
 ?READ (field_begin, Data0) ->
-  {Type, Data1} = read(?tType_BYTE, Data0),
-  case Type of
-    ?tType_STOP ->
-      {#protocol_field_begin{type = Type}, Data1};
-    _ ->
-      {Id, Data2} = read(?tType_I16, Data1),
-      {#protocol_field_begin{type = Type, id = Id}, Data2}
+  case Data0 of
+    <<?tType_STOP:8/big-signed, Data1/binary>>  ->
+      {#protocol_field_begin{type = ?tType_STOP}, Data1};
+    <<Type:8/big-signed, Id:16/big-signed, Data1/binary>> ->
+      {#protocol_field_begin{type = Type, id = Id}, Data1}
   end;
 
 ?READ (field_end, Data) ->
   {ok, Data};
 
-?READ (field_stop, Data0) ->
-  {?tType_STOP, Data1} = read(?tType_BYTE, Data0),
-  {ok, Data1};
+%% This isn't necessary, since we never explicitly read a `field_stop', we
+%% just find it when trying to read a `field_begin'.
+%%
+%% ?READ (field_stop, Data0) ->
+%%   {?tType_STOP, Data1} = read(?tType_BYTE, Data0),
+%%   {ok, Data1};
 
 ?READ (map_begin, Data0) ->
-  {KType, Data1} = read(?tType_BYTE, Data0),
-  {VType, Data2} = read(?tType_BYTE, Data1),
-  {Size, Data3} = read(?tType_I32, Data2),
-  {#protocol_map_begin{ktype = KType, vtype = VType, size = Size}, Data3};
+  <<KType:8/big-signed, VType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
+  {#protocol_map_begin{ktype = KType, vtype = VType, size = Size}, Data1};
 
 ?READ (map_end, Data) ->
   {ok, Data};
 
 ?READ (list_begin, Data0) ->
-  {EType, Data1} = read(?tType_BYTE, Data0),
-  {Size, Data2} = read(?tType_I32, Data1),
-  {#protocol_list_begin{etype = EType, size = Size}, Data2};
+  <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
+  {#protocol_list_begin{etype = EType, size = Size}, Data1};
 
 ?READ (list_end, Data) ->
   {ok, Data};
 
 ?READ (set_begin, Data0) ->
-  {EType, Data1} = read(?tType_BYTE, Data0),
-  {Size, Data2} = read(?tType_I32, Data1),
-  {#protocol_set_begin{etype = EType, size = Size}, Data2};
+  <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
+  {#protocol_set_begin{etype = EType, size = Size}, Data1};
 
 ?READ (set_end, Data) ->
   {ok, Data};
 
 ?READ (?tType_BOOL, Data0) ->
-  {Bool, Data1} = read(?tType_BYTE, Data0),
+  <<Bool:8/big-signed, Data1/binary>> = Data0,
   {Bool =/= 0, Data1};
 
 ?READ (?tType_BYTE, Data0) ->
@@ -208,8 +205,8 @@ read(Type, DataIn) ->
   {Val, Data1};
 
 ?READ (?tType_STRING, Data0) ->
-  {Size, Data1} = read(?tType_I32, Data0),
-  read_data(Size, Data1);
+  <<Size:32/big-signed, String:Size/binary, Data1/binary>> = Data0,
+  {String, Data1};
 
 ?READ (ui32, Data0) ->
   %% Used for reading the message version header.
