@@ -68,14 +68,14 @@ loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ox_thri
 -spec handle_request(Config::#ox_thrift_config{}, RequestData::binary()) -> Reply::iolist()|'noreply'.
 handle_request (#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, handler_module=HandlerModule}, RequestData) ->
   {Function, CallType, SeqId, Args} =
-    ox_thrift_protocol:decode_message(CodecModule, ServiceModule, RequestData),
+    CodecModule:decode_message(ServiceModule, RequestData),
 %%  try
   Result = HandlerModule:handle_function(Function, Args),
   case {CallType, Result} of
     {?tMessageType_CALL, {reply, Reply}} ->
-      ox_thrift_protocol:encode_message(CodecModule, ServiceModule, Function, ?tMessageType_REPLY, SeqId, [ Reply ]);
+      CodecModule:encode_message(ServiceModule, Function, ?tMessageType_REPLY, SeqId, [ Reply ]);
     {?tMessageType_CALL, ok} ->
-      ox_thrift_protocol:encode_message(CodecModule, ServiceModule, Function, ?tMessageType_REPLY, SeqId, []);
+      CodecModule:encode_message(ServiceModule, Function, ?tMessageType_REPLY, SeqId, []);
     {?tMessageType_ONEWAY, ok} ->
       noreply
   end.

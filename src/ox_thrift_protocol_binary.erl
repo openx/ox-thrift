@@ -6,6 +6,10 @@
         , read/2
         ]).
 
+-export([ encode_message/5, decode_message/2 ]).
+
+-include("ox_thrift_protocol.hrl").
+
 %% -define(DEBUG_READ, true).
 
 %% There is an asymmetry to the `write/1' and `read/2' interfaces.  `write/1'
@@ -103,9 +107,10 @@ write ({?tType_STRING, Bin}) when is_binary(Bin) ->
 
 
 -ifdef(DEBUG_READ).
-read(Type, DataIn) ->
-  Ret = {Val, DataOut} = readx(Type, DataIn),
-  io:format("read(~p) -> {~p, ~p}\n", [ Type, Val, DataOut ]),
+read(DataIn, Type) ->
+  io:format("read(~p, ~p) ->\n", [ DataIn, Type ]),
+  Ret = {DataOut, Val} = read_real(DataIn, Type),
+  io:format("  {~p, ~p}\n", [ DataOut, Val ]),
   Ret.
 -define(READ, read_real).
 -else. %% ! DEBUG_READ
@@ -113,44 +118,44 @@ read(Type, DataIn) ->
 -endif. %% ! DEBUG_READ
 
 
-?READ (message_begin, Data0) ->
-  {Initial, Data1} = read(ui32, Data0),
+?READ (Data0, message_begin) ->
+  {Data1, Initial} = read(Data0, ui32),
   case Initial band ?VERSION_MASK of
     ?VERSION_1 ->
       Type = Initial band ?TYPE_MASK,
-      {Name, Data2} = read(?tType_STRING, Data1),
-      {SeqId, Data3} = read(?tType_I32, Data2),
-      {#protocol_message_begin{name = Name, type = Type, seqid = SeqId}, Data3};
+      {Data2, Name} = read(Data1, ?tType_STRING),
+      {Data3, SeqId} = read(Data2, ?tType_I32),
+      {Data3, #protocol_message_begin{name = Name, type = Type, seqid = SeqId}};
     0 ->
       %% No version header; read the old way.
-      {Name, Data2}  = read_data(Initial, Data1),
-      {Type, Data3}  = read(?tType_BYTE, Data2),
-      {SeqId, Data4} = read(?tType_I32, Data3),
-      {#protocol_message_begin{name = Name, type = Type, seqid = SeqId}, Data4};
+      {Data2, Name}  = read_data(Data1, Initial),
+      {Data3, Type}  = read(Data2, ?tType_BYTE),
+      {Data4, SeqId} = read(Data3, ?tType_I32),
+      {Data4, #protocol_message_begin{name = Name, type = Type, seqid = SeqId}};
     _ ->
       %% Unexpected version number.
       error({bad_binary_protocol_version, Initial})
   end;
 
-?READ (message_end, Data) ->
-  {ok, Data};
+?READ (Data, message_end) ->
+  {Data, ok};
 
-?READ (struct_begin, Data) ->
-  {ok, Data};
+?READ (Data, struct_begin) ->
+  {Data, ok};
 
-?READ (struct_end, Data) ->
-  {ok, Data};
+?READ (Data, struct_end) ->
+  {Data, ok};
 
-?READ (field_begin, Data0) ->
+?READ (Data0, field_begin) ->
   case Data0 of
     <<?tType_STOP:8/big-signed, Data1/binary>>  ->
-      {#protocol_field_begin{type = ?tType_STOP}, Data1};
+      {Data1, #protocol_field_begin{type = ?tType_STOP}};
     <<Type:8/big-signed, Id:16/big-signed, Data1/binary>> ->
-      {#protocol_field_begin{type = Type, id = Id}, Data1}
+      {Data1, #protocol_field_begin{type = Type, id = Id}}
   end;
 
-?READ (field_end, Data) ->
-  {ok, Data};
+?READ (Data, field_end) ->
+  {Data, ok};
 
 %% This isn't necessary, since we never explicitly read a `field_stop', we
 %% just find it when trying to read a `field_begin'.
@@ -159,67 +164,67 @@ read(Type, DataIn) ->
 %%   {?tType_STOP, Data1} = read(?tType_BYTE, Data0),
 %%   {ok, Data1};
 
-?READ (map_begin, Data0) ->
+?READ (Data0, map_begin) ->
   <<KType:8/big-signed, VType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {#protocol_map_begin{ktype = KType, vtype = VType, size = Size}, Data1};
+  {Data1, #protocol_map_begin{ktype = KType, vtype = VType, size = Size}};
 
-?READ (map_end, Data) ->
-  {ok, Data};
+?READ (Data, map_end) ->
+  {Data, ok};
 
-?READ (list_begin, Data0) ->
+?READ (Data0, list_begin) ->
   <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {#protocol_list_begin{etype = EType, size = Size}, Data1};
+  {Data1, #protocol_list_begin{etype = EType, size = Size}};
 
-?READ (list_end, Data) ->
-  {ok, Data};
+?READ (Data, list_end) ->
+  {Data, ok};
 
-?READ (set_begin, Data0) ->
+?READ (Data0, set_begin) ->
   <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {#protocol_set_begin{etype = EType, size = Size}, Data1};
+  {Data1, #protocol_set_begin{etype = EType, size = Size}};
 
-?READ (set_end, Data) ->
-  {ok, Data};
+?READ (Data, set_end) ->
+  {Data, ok};
 
-?READ (?tType_BOOL, Data0) ->
+?READ (Data0, ?tType_BOOL) ->
   <<Bool:8/big-signed, Data1/binary>> = Data0,
-  {Bool =/= 0, Data1};
+  {Data1, Bool =/= 0};
 
-?READ (?tType_BYTE, Data0) ->
+?READ (Data0, ?tType_BYTE) ->
   <<Val:8/integer-signed-big, Data1/binary>> = Data0,
-  {Val, Data1};
+  {Data1, Val};
 
-?READ (?tType_I16, Data0) ->
+?READ (Data0, ?tType_I16) ->
   <<Val:16/integer-signed-big, Data1/binary>> = Data0,
-  {Val, Data1};
+  {Data1, Val};
 
-?READ (?tType_I32, Data0) ->
+?READ (Data0, ?tType_I32) ->
   <<Val:32/integer-signed-big, Data1/binary>> = Data0,
-  {Val, Data1};
+  {Data1, Val};
 
-?READ (?tType_I64, Data0) ->
+?READ (Data0, ?tType_I64) ->
   <<Val:64/integer-signed-big, Data1/binary>> = Data0,
-  {Val, Data1};
+  {Data1, Val};
 
-?READ (?tType_DOUBLE, Data0) ->
+?READ (Data0, ?tType_DOUBLE) ->
   <<Val:64/float-signed-big, Data1/binary>> = Data0,
-  {Val, Data1};
+  {Data1, Val};
 
-?READ (?tType_STRING, Data0) ->
+?READ (Data0, ?tType_STRING) ->
   <<Size:32/big-signed, String:Size/binary, Data1/binary>> = Data0,
-  {String, Data1};
+  {Data1, String};
 
-?READ (ui32, Data0) ->
+?READ (Data0, ui32) ->
   %% Used for reading the message version header.
   <<Val:32/integer-unsigned-big, Data1/binary>> = Data0,
-  {Val, Data1}.
+  {Data1, Val}.
 
 
--spec read_data(Size::integer(), DataIn::binary()) -> {Value::binary(), DataOut::binary()}.
-read_data (Size, Data0) ->
+-spec read_data(DataIn::binary(), Size::non_neg_integer()) -> {DataOut::binary(), Value::binary()}.
+read_data (Data0, Size) ->
   case Size of
-    0 -> {<<>>, Data0};
+    0 -> {Data0, <<>>};
     _ -> <<Val:Size/binary, Data1/binary>> = Data0,
-         {Val, Data1}
+         {Data1, Val}
   end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -232,52 +237,52 @@ read_data (Size, Data0) ->
 
 message_test () ->
   P = #protocol_message_begin{name = <<"test">>, type = ?tMessageType_CALL, seqid = 16#7FFFFFF0},
-  ?assertEqual({P, <<>>}, read(message_begin, iolist_to_binary(write(P)))),
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), message_begin)),
 
   %% Old-style message header.
-  ?assertEqual({P, <<>>}, read(message_begin, <<4:32/big, "test", ?tMessageType_CALL, 16#7FFFFFF0:32/big>>)).
+  ?assertEqual({<<>>, P}, read(<<4:32/big, "test", ?tMessageType_CALL, 16#7FFFFFF0:32/big>>, message_begin)).
 
 field_test () ->
   P = #protocol_field_begin{type = ?tType_I32, id = 16#7FF0},
-  ?assertEqual({P, <<>>}, read(field_begin, iolist_to_binary(write(P)))),
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), field_begin)),
 
-  ?assertEqual({ok, <<>>}, read(field_end, iolist_to_binary(write(field_end)))).
+  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write(field_end)), field_end)).
 
 map_test () ->
   P = #protocol_map_begin{ktype = ?tType_BYTE, vtype = ?tType_STRING, size = 16#7FFFFFF1},
-  ?assertEqual({P, <<>>}, read(map_begin, iolist_to_binary(write(P)))),
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), map_begin)),
 
-  ?assertEqual({ok, <<>>}, read(map_end, iolist_to_binary(write(map_end)))).
+  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write(map_end)), map_end)).
 
 list_test () ->
   P = #protocol_list_begin{etype = ?tType_BYTE, size = 16#7FFFFFF2},
-  ?assertEqual({P, <<>>}, read(list_begin, iolist_to_binary(write(P)))),
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), list_begin)),
 
-  ?assertEqual({ok, <<>>}, read(list_end, iolist_to_binary(write(list_end)))).
+  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write(list_end)), list_end)).
 
 set_test () ->
   P = #protocol_set_begin{etype = ?tType_BYTE, size = 16#7FFFFFF3},
-  ?assertEqual({P, <<>>}, read(set_begin, iolist_to_binary(write(P)))),
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), set_begin)),
 
-  ?assertEqual({ok, <<>>}, read(set_end, iolist_to_binary(write(set_end)))).
+  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write(set_end)), set_end)).
 
 basic_test () ->
   B = 16#7F,
-  ?assertEqual({B, <<>>}, read(?tType_BYTE, iolist_to_binary(write({?tType_BYTE, B})))),
+  ?assertEqual({<<>>, B}, read(iolist_to_binary(write({?tType_BYTE, B})), ?tType_BYTE)),
 
   S = 16#7FFF,
-  ?assertEqual({S, <<>>}, read(?tType_I16, iolist_to_binary(write({?tType_I16, S})))),
+  ?assertEqual({<<>>, S}, read(iolist_to_binary(write({?tType_I16, S})), ?tType_I16)),
 
   I = 16#7FFFFFFF,
-  ?assertEqual({I, <<>>}, read(?tType_I32, iolist_to_binary(write({?tType_I32, I})))),
+  ?assertEqual({<<>>, I}, read(iolist_to_binary(write({?tType_I32, I})), ?tType_I32)),
 
   F = 1234.25,
-  ?assertEqual({F, <<>>}, read(?tType_DOUBLE, iolist_to_binary(write({?tType_DOUBLE, F})))),
+  ?assertEqual({<<>>, F}, read(iolist_to_binary(write({?tType_DOUBLE, F})), ?tType_DOUBLE)),
 
   SB = <<"hello, world">>,
-  ?assertEqual({SB, <<>>}, read(?tType_STRING, iolist_to_binary(write({?tType_STRING, SB})))),
+  ?assertEqual({<<>>, SB}, read(iolist_to_binary(write({?tType_STRING, SB})), ?tType_STRING)),
 
   SL = "hello, world",
-  ?assertEqual({SB, <<>>}, read(?tType_STRING, iolist_to_binary(write({?tType_STRING, SL})))).
+  ?assertEqual({<<>>, SB}, read(iolist_to_binary(write({?tType_STRING, SL})), ?tType_STRING)).
 
 -endif. %% EUNIT

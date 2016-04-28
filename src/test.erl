@@ -22,10 +22,11 @@ main ([]) ->
 
   SeqId = 88,
 
-  RequestMsgIOList = ox_thrift_protocol:encode_message(ox_thrift_protocol_binary, ssRtbService_thrift,
-                                                       solicit_bidders, ?tMessageType_CALL, SeqId, Args),
+  Function = solicit_bidders,
+  RequestMsgIOList = ox_thrift_protocol_binary:encode_message(ssRtbService_thrift,
+                                                       Function, ?tMessageType_CALL, SeqId, Args),
   RequestMsg = list_to_binary(RequestMsgIOList),
-  io:format("request ~p\n", [ RequestMsg ]),
+  %% io:format("request ~p\n", [ RequestMsg ]),
 
   ThriftConfig = #ox_thrift_config{
                     service_module = ssRtbService_thrift,
@@ -33,19 +34,22 @@ main ([]) ->
                     handler_module = ?MODULE},
   ReplyMsgIOList = ox_thrift_server:handle_request(ThriftConfig, RequestMsg),
   {OFunction, OMessageType, OSeqId, [ Reply ]} =
-    ox_thrift_protocol:decode_message(ox_thrift_protocol_binary, ssRtbService_thrift, list_to_binary(ReplyMsgIOList)),
+    ox_thrift_protocol_binary:decode_message(ssRtbService_thrift, list_to_binary(ReplyMsgIOList)),
 
-  io:format("reply ~p ~p ~p\ngot ~p\nexp ~p\n", [ OFunction, OMessageType, OSeqId, Reply, get_reply() ]),
+  %% io:format("reply ~p ~p ~p\ngot ~p\nexp ~p\n", [ OFunction, OMessageType, OSeqId, Reply, get_reply() ]),
+  OFunction = Function,
+  OMessageType = ?tMessageType_REPLY,
+  OSeqId = SeqId,
   Reply == get_reply() orelse error(reply_mismatch),
 
   ok.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-handle_function (Function=solicit_bidders, Args) ->
+handle_function (_Function=solicit_bidders, Args) ->
   Args == get_args() orelse error(request_mismatch),
+  %% io:format("~p ~p\n", [ _Function, Args ]),
 
-  io:format("~p ~p\n", [ Function, Args ]),
   {reply, get_reply()}.
 
 handle_error (Function, Reason) ->

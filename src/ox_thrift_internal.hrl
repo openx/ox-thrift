@@ -1,3 +1,6 @@
+-ifndef(_ox_thrift_internal_included).
+-define(_ox_thrift_internal_included, true).
+
 %% TType
 -define(tType_STOP, 0).
 -define(tType_VOID, 1).
@@ -25,3 +28,5 @@
 -record(protocol_map_begin, {ktype::integer(), vtype::integer(), size::integer()}).
 -record(protocol_list_begin, {etype::integer(), size::integer()}).
 -record(protocol_set_begin, {etype::integer(), size::integer()}).
+
+-endif. %% _ox_thrift_internal_included.
