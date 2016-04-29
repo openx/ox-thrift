@@ -29,4 +29,14 @@
 -record(protocol_list_begin, {etype::integer(), size::integer()}).
 -record(protocol_set_begin, {etype::integer(), size::integer()}).
 
+-define(tVoidReply_Structure,
+        {struct, []}).
+
+-define(tApplicationException_Structure,
+        {struct, [{1, string},
+                  {2, i32}]}).
+
+%% -define(LOG(Format, Args), io:format(standard_error, "~s:~p: " ++ Format, [ ?MODULE, ?LINE | Args ])).
+-define(LOG(Format, Args), ok).
+
 -endif. %% _ox_thrift_internal_included.

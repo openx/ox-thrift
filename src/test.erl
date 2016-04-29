@@ -6,7 +6,7 @@
 
 -include_lib("ssrtb_thrift_erl/include/ssRtbService_thrift.hrl").
 -include_lib("ssrtb_thrift_erl/include/ssrtb_service_types.hrl").
--include("ox_thrift.hrl").
+-include("../include/ox_thrift.hrl").
 -include("ox_thrift_internal.hrl").
 
 %% main ([]) ->
@@ -23,8 +23,8 @@ main ([]) ->
   SeqId = 88,
 
   Function = solicit_bidders,
-  RequestMsgIOList = ox_thrift_protocol_binary:encode_message(ssRtbService_thrift,
-                                                       Function, ?tMessageType_CALL, SeqId, Args),
+  RequestMsgIOList = ox_thrift_protocol_binary:encode_message(
+                       ssRtbService_thrift, Function, call, SeqId, Args),
   RequestMsg = list_to_binary(RequestMsgIOList),
   %% io:format("request ~p\n", [ RequestMsg ]),
 
@@ -32,13 +32,13 @@ main ([]) ->
                     service_module = ssRtbService_thrift,
                     codec_module = ox_thrift_protocol_binary,
                     handler_module = ?MODULE},
-  ReplyMsgIOList = ox_thrift_server:handle_request(ThriftConfig, RequestMsg),
-  {OFunction, OMessageType, OSeqId, [ Reply ]} =
+  {ReplyMsgIOList, _Function} = ox_thrift_server:handle_request(ThriftConfig, RequestMsg),
+  {OFunction, OMessageType, OSeqId, Reply} =
     ox_thrift_protocol_binary:decode_message(ssRtbService_thrift, list_to_binary(ReplyMsgIOList)),
 
   %% io:format("reply ~p ~p ~p\ngot ~p\nexp ~p\n", [ OFunction, OMessageType, OSeqId, Reply, get_reply() ]),
   OFunction = Function,
-  OMessageType = ?tMessageType_REPLY,
+  OMessageType = reply_normal,
   OSeqId = SeqId,
   Reply == get_reply() orelse error(reply_mismatch),
 

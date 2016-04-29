@@ -6,7 +6,7 @@
         , read/2
         ]).
 
--export([ encode_message/5, decode_message/2 ]).
+-export([ encode_call/4, encode_message/5, decode_message/2 ]).
 
 -include("ox_thrift_protocol.hrl").
 

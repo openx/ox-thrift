@@ -13,12 +13,15 @@
           transport,
           config :: #ox_thrift_config{} }).
 
+-define(RECV_TIMEOUT, infinity).
+
 start_link (Ref, Socket, Transport, Opts) ->
   Pid = spawn_link(?MODULE, init, [ Ref, Socket, Transport, Opts ]),
   {ok, Pid}.
 
 
 init (Ref, Socket, Transport, Config) ->
+  ?LOG("ox_thrift_server:init ~p ~p ~p ~p\n", [ Ref, Socket, Transport, Config ]),
   ok = ranch:accept_ack(Ref),
   loop(#ts_state{socket = Socket, transport = Transport, config = Config}).
 
@@ -26,61 +29,74 @@ init (Ref, Socket, Transport, Config) ->
 loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ox_thrift_config{handler_module=HandlerModule}}) ->
   %% Implement thrift_framed_transport.
 
-  {OK, Closed, Error} = Transport:messages(),
-
   Result0 =
-    case Transport:recv(Socket, 4) of
-      {OK, LengthBin} ->
+    %% Result0 will be `{ok, Packet}' or `{error, Reason}'.
+    case Transport:recv(Socket, 4, ?RECV_TIMEOUT) of
+      {ok, LengthBin} ->
         <<Length:32/integer-signed-big>> = LengthBin,
-        Transport:recv(Socket, Length);
-      RecvClosedOrError0 ->
-        RecvClosedOrError0
+        Transport:recv(Socket, Length, ?RECV_TIMEOUT);
+      Error0 ->
+        Error0
     end,
 
-  Result1 =
+  ?LOG("recv -> ~p\n", [ Result0 ]),
+
+  {Result1, Function} =
+    %% Result1 will be `ok' or `{error, Reason}'.
     case Result0 of
-      {OK, RequestData} ->
+      {ok, RequestData} ->
         case handle_request(Config, RequestData) of
-          noreply ->
+          {noreply, Function1} ->
             %% Oneway void function.
-            {OK, 0};
-          ReplyData ->
+            {ok, Function1};
+          {ReplyData, Function1} ->
             %% Normal function.
             ReplyLen = iolist_size(ReplyData),
-            Transport:send(Socket, [ <<ReplyLen:32/big-signed>>, ReplyData ])
+            Reply = [ <<ReplyLen:32/big-signed>>, ReplyData ],
+            X = Transport:send(Socket, Reply),
+            ?LOG("server send(~p, ~p) -> ~p\n", [ Socket, Reply, X ]),
+            {X, Function1}
         end;
-      RecvClosedOrError1 ->
-        RecvClosedOrError1
+      Error1 ->
+        {Error1, undefined}
     end,
 
   case Result1 of
-    {OK, _BytesSent} ->
+    ok ->
       loop(State);
-    {Closed, _} ->
-      HandlerModule:handle_error(undefined, closed),
-      Transport:close(Socket);
-    {Error, _, Reason} ->
-      HandlerModule:handle_error(undefined, Reason),
+    {error, Reason} ->
+      HandlerModule:handle_error(Function, Reason),
       Transport:close(Socket)
+      %% Return from loop on error.
   end.
 
 
--spec handle_request(Config::#ox_thrift_config{}, RequestData::binary()) -> Reply::iolist()|'noreply'.
+-spec handle_request(Config::#ox_thrift_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom()}.
 handle_request (#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, handler_module=HandlerModule}, RequestData) ->
+  %% Should do a try block around decode_message. @@
   {Function, CallType, SeqId, Args} =
     CodecModule:decode_message(ServiceModule, RequestData),
-%%  try
-  Result = HandlerModule:handle_function(Function, Args),
-  case {CallType, Result} of
-    {?tMessageType_CALL, {reply, Reply}} ->
-      CodecModule:encode_message(ServiceModule, Function, ?tMessageType_REPLY, SeqId, [ Reply ]);
-    {?tMessageType_CALL, ok} ->
-      CodecModule:encode_message(ServiceModule, Function, ?tMessageType_REPLY, SeqId, []);
-    {?tMessageType_ONEWAY, ok} ->
-      noreply
-  end.
 
-%%  catch
-%%    Error:Reason when Error =:= error; Error =:= throw ->
-%%      ReplyData = ox_thrift_protocol:encode_message(Codec, ServiceModule, Function, ?tMessageType_EXCEPTION, SeqId,  )
-%%  end
+  ResultMsg =
+    try
+      ?LOG("call ~p:handle_function(~p, ~p)\n", [ HandlerModule, Function, Args ]),
+      Result = HandlerModule:handle_function(Function, Args),
+      ?LOG("result ~p ~p\n", [ CallType, Result ]),
+      case {CallType, Result} of
+        {call, {reply, Reply}} ->
+          CodecModule:encode_message(ServiceModule, Function, reply_normal, SeqId, Reply);
+        {call, ok} ->
+          CodecModule:encode_message(ServiceModule, Function, reply_normal, SeqId, undefined);
+        {call_oneway, ok} ->
+          noreply
+      end
+    catch
+      throw:Reason ->
+        CodecModule:encode_message(ServiceModule, Function , reply_exception, SeqId, Reason);
+      error:Reason ->
+        Message = ox_thrift_util:format_error_message(Reason),
+        ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
+        CodecModule:encode_message(ServiceModule, Function, exception, SeqId, ExceptionReply)
+    end,
+  %% ?LOG("handle_request -> ~p\n", [ {ResultMsg, Function } ]),
+  {ResultMsg, Function}.

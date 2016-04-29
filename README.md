@@ -21,6 +21,10 @@ the Apache Thrift Erlang library.
   [ranch](https://github.com/ninenines/ranch) acceptor pool instead of
   rolling its own.
 
+* The `HandlerModule:handle_function(Function, Args)` interface
+  expects the HandlerModule to take its arguments as a list instead of
+  a tuple.
+
 ## Other Info
 
 * Anthony pointed me to this talk on

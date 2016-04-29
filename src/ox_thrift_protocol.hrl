@@ -1,5 +1,6 @@
 
 -include("ox_thrift_internal.hrl").
+-include("ox_thrift.hrl").
 
 typeid_to_atom(?tType_STOP)     -> field_stop;
 typeid_to_atom(?tType_VOID)     -> void;
@@ -28,6 +29,10 @@ term_to_typeid({map, _, _})     -> ?tType_MAP;
 term_to_typeid({set, _})        -> ?tType_SET;
 term_to_typeid({list, _})       -> ?tType_LIST.
 
+-define(SUCCESS_FIELD_ID, 0).
+
+-define(VALIDATE(Expr), (fun () -> Expr end)()).
+
 -define(VALIDATE_TYPE(StructType, SuppliedType),
         case term_to_typeid(StructType) of
           SuppliedType -> ok;
@@ -35,20 +40,36 @@ term_to_typeid({list, _})       -> ?tType_LIST.
         end).
 
 
--spec encode_message(ServiceModule::atom(), Function::atom(), MessageType::integer(), SeqId::integer(), Args::list()) -> iolist().
-%% `MessageType' is `?tMessageType_CALL', `?tMessageType_REPLY' or `?tMessageType_EXCEPTION'.  If a
-%% normal reply, the `Args' argument is a variable of the expected return type
-%% for `Function'.  If an exception reply, the `Args' argument is an exception record.
+-type message_type() :: 'call' | 'call_oneway' | 'reply_normal' | 'reply_exception' | 'exception'.
+
+-spec encode_call(ServiceModule::atom(), Function::atom(), SeqId::integer(), Args::term()) ->
+                     {CallType::message_type(), Data::iolist()}.
+encode_call (ServiceModule, Function, SeqId, Args) ->
+  CallType = case ServiceModule:function_info(Function, reply_type) of
+               oneway_void -> call_oneway;
+               _           -> call
+             end,
+  Data = encode_message(ServiceModule, Function, call, SeqId, Args),
+  {CallType, Data}.
+
+
+-spec encode_message(ServiceModule::atom(), Function::atom(), MessageType::message_type(), SeqId::integer(), Args::term()) -> iolist().
+%% `MessageType' is `call', `call_oneway', `reply_normal', 'reply_exception',
+%% or `exception'.  If a normal reply, the `Args' argument is a variable of
+%% the expected return type for `Function'.  If an exception reply, the `Args'
+%% argument is an record of one of the declared exception types.
 %%
 %% `Args' is a list of function arguments for a `?tMessageType_CALL', and is
 %% the reply for a `?tMessageType_REPLY' or exception record for
 %% `?tMessageType_EXCEPTION'.
 encode_message (ServiceModule, Function, MessageType, SeqId, Args) ->
   case MessageType of
-    ?tMessageType_CALL ->
+    call ->
+      ThriftMessageType = ?tMessageType_CALL,
       MessageSpec = ServiceModule:function_info(Function, params_type),
-      ArgsList = [ Function | Args ];
-    ?tMessageType_REPLY ->
+      ArgsList = list_to_tuple([ Function | Args ]);
+    reply_normal ->
+      ThriftMessageType = ?tMessageType_REPLY,
       %% Create a fake zero- or one-element structure for the result.
       ReplyName = atom_to_list(Function) ++ "_result",
       case ServiceModule:function_info(Function, reply_type) of
@@ -56,41 +77,65 @@ encode_message (ServiceModule, Function, MessageType, SeqId, Args) ->
           error(oneway_void), %% This shouldn't happen....
           MessageSpec = undefined,
           ArgsList = undefined;
-        ReplySpec={struct, []} ->
+        ?tVoidReply_Structure ->
           %% A void return
-          MessageSpec = ReplySpec,
-          ArgsList = [ ReplyName ];
+          MessageSpec = ?tVoidReply_Structure,
+          ArgsList = {ReplyName};
         ReplySpec ->
           %% A non-void return.
-          MessageSpec = {struct, [ {0, ReplySpec} ]},
-          ArgsList = [ ReplyName | Args ]
-          %% , io:format("encode\nspec ~p\nargs  ~p\n", [ MessageSpec, ArgsList ])
+          MessageSpec = {struct, [ {?SUCCESS_FIELD_ID, ReplySpec} ]},
+          ArgsList = {ReplyName, Args}
       end;
-    ?tMessageType_EXCEPTION ->
+    reply_exception ->
       %% An exception is treated as a struct with a field for each possible
       %% exception.  Since any given call returns only one exception, all
       %% except one of the fields is `undefined' and so only the field for
-      %% the actual exception is sent over the wire.
-      [ Exception ] = Args,
-      ExceptionName = element(1, Exception),
-      MessageSpec = {struct, ExceptionsSpec} = ServiceModule:function_info(Function, exceptions),
+      %% the exception actually being thrown is sent over the wire.
+      ExceptionName = element(1, Args),
+      MessageSpec0 = {struct, ExceptionsSpec} = ServiceModule:function_info(Function, exceptions),
       {ExceptionList, ExceptionFound} =
         lists:mapfoldl(
-          fun ({_, {struct, {_, StructExceptionName}}}, {ArgsAcc, FoundAcc}) ->
+          fun ({_, {struct, {_, StructExceptionName}}}, FoundAcc) ->
               case StructExceptionName of
-                ExceptionName -> {[ Exception | ArgsAcc ], true};
-                _             -> {[ undefined | ArgsAcc], FoundAcc}
+                ExceptionName -> {Args, true};
+                _             -> {undefined, FoundAcc}
               end
-          end, {[], false}, ExceptionsSpec),
-      ExceptionFound orelse
-        error({error_not_declared_as_thrown, Function, ExceptionName}),
-      ArgsList = [ Function | ExceptionList ]
-    end,
+          end, false, ExceptionsSpec),
+      ?LOG("exception ~p\n", [ {ExceptionList, ExceptionFound} ]),
+      %% If `Exception' is not one of the declared exceptions, turn it into an
+      %% application_exception.
+      if ExceptionFound ->
+          ThriftMessageType = ?tMessageType_REPLY,
+          MessageSpec = MessageSpec0,
+          ArgsList = list_to_tuple([ Function | ExceptionList ]);
+         true ->
+          ThriftMessageType = ?tMessageType_EXCEPTION,
+          MessageSpec = ?tApplicationException_Structure,
+          Message = ox_thrift_util:format_error_message({error_not_declared_as_thrown, Function, ExceptionName}),
+          ArgsList = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN}
+      end;
+    exception ->
+      ThriftMessageType = ?tMessageType_EXCEPTION,
+      ?VALIDATE(true = is_record(Args, application_exception)),
+      MessageSpec = ?tApplicationException_Structure,
+      ArgsList = Args
+  end,
 
-  [ write(#protocol_message_begin{name = atom_to_binary(Function, latin1), type = MessageType, seqid = SeqId})
+  ?VALIDATE(begin
+              {struct, StructDef} = MessageSpec,
+              StructDefLength = length(StructDef),
+              ArgsListLength = size(ArgsList) - 1,
+              if StructDefLength =/= ArgsListLength ->
+                  %% io:format(standard_error, "arg_length_mismatch\ndef ~p\narg ~p\n", [ StructDef, ArgsList ]),
+                  error({arg_length_mismatch, {provided, ArgsListLength}, {expected, StructDefLength}});
+                 true -> ok
+              end
+            end),
+
+  [ write(#protocol_message_begin{name = atom_to_binary(Function, latin1), type = ThriftMessageType, seqid = SeqId})
     %% Thrift supports only lists of uniform types, and so it uses a
     %% function-specific struct for a function's argument list.
-  , encode(MessageSpec, list_to_tuple(ArgsList))
+  , encode(MessageSpec, ArgsList)
   , write(message_end)
   ].
 
@@ -184,29 +229,53 @@ encode_struct ([], _Record, _I) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec decode_message(ServiceModule::atom(), Buffer::binary()) ->
-                        {Function::atom(), MessageType::integer(), Seqid::integer(), Args::list()}.
+                        {Function::atom(), MessageType::message_type(), Seqid::integer(), Args::term()}.
 %% `MessageType' is `?tMessageType_CALL' or `?tMessageType_ONEWAY'.
 decode_message (ServiceModule, Buffer0) ->
-  {Buffer1, #protocol_message_begin{name=FunctionBin, type=MessageType, seqid=SeqId}} =
+  {Buffer1, #protocol_message_begin{name=FunctionBin, type=ThriftMessageType, seqid=SeqId}} =
     read(Buffer0, message_begin),
   Function = binary_to_atom(FunctionBin, latin1),
-  {Buffer2, ArgsTuple} =
-    case MessageType of
-      Call when Call =:= ?tMessageType_CALL orelse Call =:= ?tMessageType_ONEWAY ->
-        MessageSpec = ServiceModule:function_info(Function, params_type),
-        decode_record(Buffer1, Function, MessageSpec);
-      ?tMessageType_REPLY ->
-        ReplySpec = ServiceModule:function_info(Function, reply_type),
-        MessageSpec = {struct, [ {0, ReplySpec} ]},
-        decode_record(Buffer1, Function, MessageSpec);
-      ?tMessageType_EXCEPTION ->
-        error({not_handled, MessageType}),
-        MessageSpec = undefined
-    end,
+  case ThriftMessageType of
+    ?tMessageType_CALL ->
+      MessageType = case ServiceModule:function_info(Function, reply_type) of
+                      oneway_void -> call_oneway;
+                      _           -> call
+                    end,
+      MessageSpec = ServiceModule:function_info(Function, params_type),
+      {Buffer2, ArgsTuple} = decode_record(Buffer1, Function, MessageSpec),
+      [ _ | Args ] = tuple_to_list(ArgsTuple);
+    ?tMessageType_ONEWAY ->
+      MessageType = call_oneway,
+      MessageSpec = ServiceModule:function_info(Function, params_type),
+      {Buffer2, ArgsTuple} = decode_record(Buffer1, Function, MessageSpec),
+      [ _ | Args ] = tuple_to_list(ArgsTuple);
+    ?tMessageType_REPLY ->
+      MessageSpec = ServiceModule:function_info(Function, reply_type),
+      {Buffer2, {_, Args}, MessageType} = decode_reply(Buffer1, ServiceModule, Function, MessageSpec);
+    ?tMessageType_EXCEPTION ->
+      MessageType = exception,
+      MessageSpec = ?tApplicationException_Structure,
+      {Buffer2, Args} = decode_record(Buffer1, application_exception, MessageSpec)
+  end,
   {<<>>, ok} = read(Buffer2, message_end),
-  %% io:format("decode\nspec ~p\nargs ~p\n", [ MessageSpec, ArgsTuple ]),
-  [ _ | Args ] = tuple_to_list(ArgsTuple),
+  %% io:format(standard_error, "decode\nspec ~p\nargs ~p\n", [ MessageSpec, Args ]),
   {Function, MessageType, SeqId, Args}.
+
+
+decode_reply (Buffer0, ServiceModule, Function, ReplySpec) ->
+  {struct, ExceptionDef} = ServiceModule:function_info(Function, exceptions),
+  MessageSpec = {struct, [ {?SUCCESS_FIELD_ID, ReplySpec} | ExceptionDef ]},
+  {Buffer1, ArgsTuple} = decode_record(Buffer0, Function, MessageSpec),
+  [ F, Reply | Exceptions ] = tuple_to_list(ArgsTuple),
+  %% Check for an exception.
+  case first_defined(Exceptions)of
+    undefined ->
+      case ReplySpec of
+        ?tVoidReply_Structure -> {Buffer1, {F, ok}, reply_normal};
+        _                     -> {Buffer1, {F, Reply}, reply_normal}
+      end;
+    Exception                 -> {Buffer1, {F, Exception}, reply_exception}
+  end.
 
 
 -spec decode(BufferIn::binary(), Spec::term()) -> {BufferOut::binary(), Decoded::term()}.
@@ -357,6 +426,14 @@ keyfind ([ {FieldId, FieldTypeAtom} | Rest ], SearchFieldId, I) ->
   end;
 keyfind ([], _, _) -> false.
 
+%% Returns the first element of a list that is not `undefined', or `undefined'
+%% if all of the elements are `undefined'.
+first_defined ([ undefined | Rest ]) ->
+  first_defined(Rest);
+first_defined ([ First | _ ]) -> First;
+first_defined ([]) -> undefined.
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -ifdef(TEST).
@@ -382,5 +459,10 @@ keyfind_test () ->
   ?assertEqual({apple, 1}, keyfind(List, a, 1)),
   ?assertEqual({carrot, 3}, keyfind(List, c, 1)),
   ?assertEqual(false, keyfind(List, d, 1)).
+
+first_defined_test () ->
+  ?assertEqual(undefined, first_defined([])),
+  ?assertEqual(1, first_defined([ 1, undefined, 3 ])),
+  ?assertEqual(2, first_defined([ undefined, 2, 3 ])).
 
 -endif. %% EUNIT
