@@ -25,6 +25,10 @@ the Apache Thrift Erlang library.
   expects the HandlerModule to take its arguments as a list instead of
   a tuple.
 
+## Message Protocol
+
+See the [message protocol documentation](MessageProtocol.md).
+
 ## Other Info
 
 * Anthony pointed me to this talk on
