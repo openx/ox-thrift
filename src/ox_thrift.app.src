@@ -1,0 +1,11 @@
+%% -*- mode: erlang -*-
+{application, ox_thrift,
+ [ {description, "Thrift Library for Erlang"}
+ , {vsn, "0.1.0"}
+ , {applications, [ kernel, stdlib ]}
+ , {env, [
+          %% Controls whether the TApplicationException that is returned when
+          %% the Thrift server crashes includes a backtrace.
+          {exceptions_include_traces, true}
+  ]}
+ ]}.
