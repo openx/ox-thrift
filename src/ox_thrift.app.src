@@ -1,7 +1,7 @@
 %% -*- mode: erlang -*-
 {application, ox_thrift,
  [ {description, "Thrift Library for Erlang"}
- , {vsn, "0.1.0"}
+ , {vsn, {cmd, "perl -n -e 'm/^FW_PACKAGE_VERSION=\"([^\"]*)\"/ and print \"$1\\n\"' fw-pkgin/config"}}
  , {applications, [ kernel, stdlib ]}
  , {env, [
           %% Controls whether the TApplicationException that is returned when
