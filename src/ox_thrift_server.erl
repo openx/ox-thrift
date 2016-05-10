@@ -74,29 +74,33 @@ loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ox_thri
 -spec handle_request(Config::#ox_thrift_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom()}.
 handle_request (#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, handler_module=HandlerModule}, RequestData) ->
   %% Should do a try block around decode_message. @@
-  {Function, CallType, SeqId, Args} =
-    CodecModule:decode_message(ServiceModule, RequestData),
+  {DecodeMilliSeconds, {Function, CallType, SeqId, Args}} =
+    timer:tc(CodecModule, decode_message, [ ServiceModule, RequestData ]),
+  ox_thrift_stats:record(decode, DecodeMilliSeconds),
 
-  ResultMsg =
+  {EncodeMilliSeconds, ResultMsg} =
     try
       ?LOG("call ~p:handle_function(~p, ~p)\n", [ HandlerModule, Function, Args ]),
       Result = HandlerModule:handle_function(Function, Args),
       ?LOG("result ~p ~p\n", [ CallType, Result ]),
       case {CallType, Result} of
         {call, {reply, Reply}} ->
-          CodecModule:encode_message(ServiceModule, Function, reply_normal, SeqId, Reply);
+          timer:tc(CodecModule, encode_message, [ ServiceModule, Function, reply_normal, SeqId, Reply ]);
         {call, ok} ->
-          CodecModule:encode_message(ServiceModule, Function, reply_normal, SeqId, undefined);
+          timer:tc(CodecModule, encode_message, [ ServiceModule, Function, reply_normal, SeqId, undefined ]);
         {call_oneway, ok} ->
-          noreply
+          {0, noreply}
       end
     catch
       throw:Reason ->
-        CodecModule:encode_message(ServiceModule, Function , reply_exception, SeqId, Reason);
+        timer:tc(CodecModule, encode_message, [ ServiceModule, Function , reply_exception, SeqId, Reason ]);
       error:Reason ->
         Message = ox_thrift_util:format_error_message(Reason),
         ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
-        CodecModule:encode_message(ServiceModule, Function, exception, SeqId, ExceptionReply)
+        timer:tc(CodecModule, encode_message, [ ServiceModule, Function, exception, SeqId, ExceptionReply ])
     end,
+  ResultMsg =/= noreply andalso
+    ox_thrift_stats:record(encode, EncodeMilliSeconds),
+
   %% ?LOG("handle_request -> ~p\n", [ {ResultMsg, Function } ]),
   {ResultMsg, Function}.

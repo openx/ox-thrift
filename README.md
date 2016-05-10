@@ -45,3 +45,11 @@ See the [message protocol documentation](MessageProtocol.md).
 * Erlang documentation on
   [Constructing and Matching Binaries](http://erlang.org/doc/efficiency_guide/binaryhandling.html),
   which may be useful for optimization.
+
+## Speedup
+
+```
+(erlang@caaa-g07.ca.dc.openx.org)5> thrift_stats:read().
+[{decode,159520,417945003,2620},
+ {encode,102018,269480263,2641}]
+```
