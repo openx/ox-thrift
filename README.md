@@ -49,7 +49,14 @@ See the [message protocol documentation](MessageProtocol.md).
 ## Speedup
 
 ```
-(erlang@caaa-g07.ca.dc.openx.org)5> thrift_stats:read().
-[{decode,159520,417945003,2620},
- {encode,102018,269480263,2641}]
+(erlang@xfga-e27.xf.dc.openx.org)11> thrift_stats:read().
+[{decode,760902,809709370,1064},
+ {encode,618680,477450651,772}]
+```
+
+New Code
+```
+(erlang@xfga-e27.xf.dc.openx.org)9> ox_thrift_stats:read().
+[{decode,481342,127065950,264},
+ {encode,379650,83756142,221}]
 ```

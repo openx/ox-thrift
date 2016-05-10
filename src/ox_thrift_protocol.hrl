@@ -42,6 +42,9 @@ term_to_typeid({list, _})       -> ?tType_LIST.
 
 -type message_type() :: 'call' | 'call_oneway' | 'reply_normal' | 'reply_exception' | 'exception'.
 
+-type term_type() :: 'void' | 'bool' | 'byte' | 'double' | 'i16' | 'i32' | 'i64' | 'string'
+                   | {struct, term()} | {map, term()} | {set, term()} | {list, term()}.
+
 -spec encode_call(ServiceModule::atom(), Function::atom(), SeqId::integer(), Args::term()) ->
                      {CallType::message_type(), Data::iolist()}.
 encode_call (ServiceModule, Function, SeqId, Args) ->
@@ -287,7 +290,7 @@ decode (Buffer, {struct, {Schema, StructName}})
 decode (Buffer0, {list, Type}) ->
   {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read(Buffer0, list_begin),
   ?VALIDATE_TYPE(Type, EType),
-  {Buffer2, List} = mapfoldn(fun (BufferL0) -> decode(BufferL0, Type) end, Buffer1, Size),
+  {Buffer2, List} = decode_list(Buffer1, Type, [], Size),
   {Buffer3, ok} = read(Buffer2, list_end),
   {Buffer3, List};
 
@@ -295,18 +298,14 @@ decode (Buffer0, {map, KeyType, ValType}) ->
   {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read(Buffer0, map_begin),
   ?VALIDATE_TYPE(KeyType, KType),
   ?VALIDATE_TYPE(ValType, VType),
-  {Buffer2, List} = mapfoldn(fun (BufferL0) ->
-                                 {BufferL1, K} = decode(BufferL0, KeyType),
-                                 {BufferL2, V} = decode(BufferL1, ValType),
-                                 {BufferL2, {K, V}}
-                             end, Buffer1, Size),
+  {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, [], Size),
   {Buffer3, ok} = read(Buffer2, map_end),
   {Buffer3, dict:from_list(List)};
 
 decode (Buffer0, {set, Type}) ->
   {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read(Buffer0, set_begin),
   ?VALIDATE_TYPE(Type, EType),
-  {Buffer2, List} = mapfoldn(fun (BufferL0) -> decode(BufferL0, Type) end, Buffer1, Size),
+  {Buffer2, List} = decode_set(Buffer1, Type, [], Size),
   {Buffer3, ok} = read(Buffer2, set_end),
   {Buffer3, sets:from_list(List)};
 
@@ -351,6 +350,28 @@ decode_struct (Buffer0, FieldList, Acc) ->
           decode_struct(Buffer3, FieldList, Acc)
       end
   end.
+
+
+-spec decode_list(IBuffer::binary(), EType::term_type(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+decode_list (Buffer, _, Acc, 0) -> {Buffer, lists:reverse(Acc)};
+decode_list (Buffer0, EType, Acc, N) ->
+  {Buffer1, Elt} = decode(Buffer0, EType),
+  decode_list(Buffer1, EType, [ Elt | Acc ], N - 1).
+
+
+-spec decode_map(IBuffer::binary(), {KType::term_type(), VType::term_type()}, Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+decode_map (Buffer, _, Acc, 0) -> {Buffer, Acc};
+decode_map (Buffer0, Types={KType, VType}, Acc, N) ->
+  {Buffer1, K} = decode(Buffer0, KType),
+  {Buffer2, V} = decode(Buffer1, VType),
+  decode_map(Buffer2, Types, [ {K, V} | Acc ], N - 1).
+
+
+-spec decode_set(IBuffer::binary(), EType::term_type(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+decode_set (Buffer, _, Acc, 0) -> {Buffer, Acc};
+decode_set (Buffer0, EType, Acc, N) ->
+  {Buffer1, Elt} = decode(Buffer0, EType),
+  decode_set(Buffer1, EType, [ Elt | Acc ], N - 1).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -406,14 +427,6 @@ skip_struct (Buffer0) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-mapfoldn (F, Acc0, N) when N > 0 ->
-  {Acc1, First} = F(Acc0),
-  {Acc2, Rest} = mapfoldn(F, Acc1, N-1),
-  {Acc2, [ First | Rest ]};
-mapfoldn (F, Acc, 0) when is_function(F, 1) ->
-  {Acc, []}.
-
-
 foldn (F, Acc, N) when N > 0 ->
   foldn(F, F(Acc), N-1);
 foldn (F, Acc, 0) when is_function(F, 1) ->
@@ -441,13 +454,6 @@ first_defined ([]) -> undefined.
 -endif.
 
 -ifdef(EUNIT).
-
-mapfoldn_test () ->
-  ?assertEqual({"abcdef", ""}, mapfoldn(fun ([ F | R ]) -> {R, F + $A - $a} end, "abcdef", 0)),
-  ?assertEqual({"bcdef", "A"}, mapfoldn(fun ([ F | R ]) -> {R, F + $A - $a} end, "abcdef", 1)),
-  ?assertEqual({"def", "ABC"}, mapfoldn(fun ([ F | R ]) -> {R, F + $A - $a} end, "abcdef", 3)),
-  ?assertEqual({"", "ABCDEF"}, mapfoldn(fun ([ F | R ]) -> {R, F + $A - $a} end, "abcdef", 6)),
-  ?assertError(function_clause, mapfoldn(fun ([ F | R ]) -> {R, F + $A - $a} end, "abcdef", 7)).
 
 foldn_test () ->
   ?assertEqual(1, foldn(fun (E) -> E * 2 end, 1, 0)),
