@@ -2,32 +2,24 @@
 -include("ox_thrift_internal.hrl").
 -include("ox_thrift.hrl").
 
-typeid_to_atom(?tType_STOP)     -> field_stop;
-typeid_to_atom(?tType_VOID)     -> void;
-typeid_to_atom(?tType_BOOL)     -> bool;
-typeid_to_atom(?tType_BYTE)     -> byte;
-typeid_to_atom(?tType_DOUBLE)   -> double;
-typeid_to_atom(?tType_I16)      -> i16;
-typeid_to_atom(?tType_I32)      -> i32;
-typeid_to_atom(?tType_I64)      -> i64;
-typeid_to_atom(?tType_STRING)   -> string;
-typeid_to_atom(?tType_STRUCT)   -> struct;
-typeid_to_atom(?tType_MAP)      -> map;
-typeid_to_atom(?tType_SET)      -> set;
-typeid_to_atom(?tType_LIST)     -> list.
+%% typeid_to_atom(?tType_STOP)     -> field_stop;
+%% typeid_to_atom(?tType_VOID)     -> void;
+%% typeid_to_atom(?tType_BOOL)     -> bool;
+%% typeid_to_atom(?tType_BYTE)     -> byte;
+%% typeid_to_atom(?tType_DOUBLE)   -> double;
+%% typeid_to_atom(?tType_I16)      -> i16;
+%% typeid_to_atom(?tType_I32)      -> i32;
+%% typeid_to_atom(?tType_I64)      -> i64;
+%% typeid_to_atom(?tType_STRING)   -> string;
+%% typeid_to_atom(?tType_STRUCT)   -> struct;
+%% typeid_to_atom(?tType_MAP)      -> map;
+%% typeid_to_atom(?tType_SET)      -> set;
+%% typeid_to_atom(?tType_LIST)     -> list.
 
-term_to_typeid(void)            -> ?tType_VOID;
-term_to_typeid(bool)            -> ?tType_BOOL;
-term_to_typeid(byte)            -> ?tType_BYTE;
-term_to_typeid(double)          -> ?tType_DOUBLE;
-term_to_typeid(i16)             -> ?tType_I16;
-term_to_typeid(i32)             -> ?tType_I32;
-term_to_typeid(i64)             -> ?tType_I64;
-term_to_typeid(string)          -> ?tType_STRING;
-term_to_typeid({struct, _})     -> ?tType_STRUCT;
-term_to_typeid({map, _, _})     -> ?tType_MAP;
-term_to_typeid({set, _})        -> ?tType_SET;
-term_to_typeid({list, _})       -> ?tType_LIST.
+-spec term_to_typeid(Term::struct_type()) -> TypeId::proto_type().
+term_to_typeid (A) when is_atom(A)       -> A;
+term_to_typeid ({A, _}) when is_atom(A)  -> A;
+term_to_typeid ({map, _, _})             -> map.
 
 -define(SUCCESS_FIELD_ID, 0).
 
@@ -41,9 +33,6 @@ term_to_typeid({list, _})       -> ?tType_LIST.
 
 
 -type message_type() :: 'call' | 'call_oneway' | 'reply_normal' | 'reply_exception' | 'exception'.
-
--type term_type() :: 'void' | 'bool' | 'byte' | 'double' | 'i16' | 'i32' | 'i64' | 'string'
-                   | {struct, term()} | {map, term()} | {set, term()} | {list, term()}.
 
 -spec encode_call(ServiceModule::atom(), Function::atom(), SeqId::integer(), Args::term()) ->
                      {CallType::message_type(), Data::iolist()}.
@@ -199,8 +188,7 @@ encode ({set, Type}, Data) ->
 
 encode (Type, Data) when is_atom(Type) ->
   %% Encode the basic types.
-  TypeId = term_to_typeid(Type),
-  write({TypeId, Data});
+  write(Type, Data);
 
 encode (Type, Data) ->
   error({invalid_type, {type, Type}, {data, Data}}).
@@ -209,7 +197,7 @@ encode (Type, Data) ->
 -spec encode_struct(FieldData::list({integer(), atom()}), Record::tuple(), I::integer()) -> IOData::iodata().
 encode_struct ([ {FieldId, Type} | FieldRest ], Record, I) ->
   %% We could use tail recursion to make this a little more efficient, because
-  %% the field order should matter. @@
+  %% the field order shouldn't matter. @@
   case element(I, Record) of
     undefined ->
       %% null fields are skipped
@@ -311,8 +299,7 @@ decode (Buffer0, {set, Type}) ->
 
 decode (Buffer0, Type) when is_atom(Type) ->
   %% Decode the basic types.
-  TypeId = term_to_typeid(Type),
-  read(Buffer0, TypeId).
+  read(Buffer0, Type).
 
 
 -spec decode_record(BufferIn::binary(), Name::atom(), tuple()) -> {binary(), tuple()}.
@@ -333,7 +320,7 @@ decode_record (Buffer0, Name, {struct, StructDef})
 decode_struct (Buffer0, FieldList, Acc) ->
   {Buffer1, #protocol_field_begin{type=FieldTId, id=FieldId}} = read(Buffer0, field_begin),
   case FieldTId of
-    ?tType_STOP ->
+    field_stop ->
       Record = erlang:make_tuple(length(FieldList)+1, undefined, Acc),
       {Buffer1, Record};
     _ ->
@@ -345,21 +332,21 @@ decode_struct (Buffer0, FieldList, Acc) ->
           decode_struct(Buffer3, FieldList, [ {N, Val} | Acc ]);
         false ->
           %% io:format("field ~p not found in ~p\n", [ FieldId, FieldList ]),
-          {Buffer2, _} = skip(Buffer1, typeid_to_atom(FieldTId)),
+          {Buffer2, _} = skip(Buffer1, FieldTId),
           {Buffer3, ok} = read(Buffer2, field_end),
           decode_struct(Buffer3, FieldList, Acc)
       end
   end.
 
 
--spec decode_list(IBuffer::binary(), EType::term_type(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+-spec decode_list(IBuffer::binary(), EType::struct_type(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
 decode_list (Buffer, _, Acc, 0) -> {Buffer, lists:reverse(Acc)};
 decode_list (Buffer0, EType, Acc, N) ->
   {Buffer1, Elt} = decode(Buffer0, EType),
   decode_list(Buffer1, EType, [ Elt | Acc ], N - 1).
 
 
--spec decode_map(IBuffer::binary(), {KType::term_type(), VType::term_type()}, Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+-spec decode_map(IBuffer::binary(), {KType::struct_type(), VType::struct_type()}, Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
 decode_map (Buffer, _, Acc, 0) -> {Buffer, Acc};
 decode_map (Buffer0, Types={KType, VType}, Acc, N) ->
   {Buffer1, K} = decode(Buffer0, KType),
@@ -367,7 +354,7 @@ decode_map (Buffer0, Types={KType, VType}, Acc, N) ->
   decode_map(Buffer2, Types, [ {K, V} | Acc ], N - 1).
 
 
--spec decode_set(IBuffer::binary(), EType::term_type(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+-spec decode_set(IBuffer::binary(), EType::struct_type(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
 decode_set (Buffer, _, Acc, 0) -> {Buffer, Acc};
 decode_set (Buffer0, EType, Acc, N) ->
   {Buffer1, Elt} = decode(Buffer0, EType),
@@ -385,7 +372,7 @@ skip (Buffer0, struct) ->
 skip (Buffer0, list) ->
   {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read(Buffer0, list_begin),
   Buffer2 = foldn(fun (BufferL0) ->
-                      {BufferL1, _} = decode(BufferL0, typeid_to_atom(EType)),
+                      {BufferL1, _} = decode(BufferL0, EType),
                       BufferL1
                   end, Buffer1, Size),
   read(Buffer2, list_end);
@@ -393,8 +380,8 @@ skip (Buffer0, list) ->
 skip (Buffer0, map) ->
   {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read(Buffer0, map_begin),
   Buffer2 = foldn(fun (BufferL0) ->
-                      {BufferL1, _} = decode(BufferL0, typeid_to_atom(KType)),
-                      {BufferL2, _} = decode(BufferL1, typeid_to_atom(VType)),
+                      {BufferL1, _} = decode(BufferL0, KType),
+                      {BufferL2, _} = decode(BufferL1, VType),
                       BufferL2
                   end, Buffer1, Size),
   read(Buffer2, map_end);
@@ -402,7 +389,7 @@ skip (Buffer0, map) ->
 skip (Buffer0, set) ->
   {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read(Buffer0, set_begin),
   Buffer2 = foldn(fun (BufferL0) ->
-                      {BufferL1, _} = decode(BufferL0, typeid_to_atom(EType)),
+                      {BufferL1, _} = decode(BufferL0, EType),
                       BufferL1
                   end, Buffer1, Size),
   read(Buffer2, set_end);
@@ -416,10 +403,10 @@ skip (Buffer0, Type) when is_atom(Type) ->
 skip_struct (Buffer0) ->
   {Buffer1, #protocol_field_begin{type=Type}} = read(Buffer0, field_begin),
   case Type of
-    ?tType_STOP ->
+    field_stop ->
       Buffer1;
     _ ->
-      {Buffer2, _} = skip(Buffer1, typeid_to_atom(Type)),
+      {Buffer2, _} = skip(Buffer1, Type),
       {Buffer3, ok} = read(Buffer2, field_end),
       skip_struct(Buffer3)
   end.

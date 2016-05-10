@@ -22,12 +22,18 @@
 -define(tMessageType_EXCEPTION, 3).
 -define(tMessageType_ONEWAY, 4).
 
+-type base_type () :: 'void' | 'bool' | 'byte' | 'double' | 'i16' | 'i32' | 'i64' | 'string'.
+
+-type proto_type() :: base_type() | 'struct' | 'set' | 'map' | 'list'.
+
+-type struct_type() :: base_type() | {struct, term()} | {map, struct_type(), struct_type()} | {set, struct_type()} | {list, struct_type()}.
+
 -record(protocol_message_begin, {name::binary(), type::integer(), seqid::integer()}).
 -record(protocol_struct_begin, {name::binary()}).
--record(protocol_field_begin, {name::binary(), type::integer(), id::integer()}).
--record(protocol_map_begin, {ktype::integer(), vtype::integer(), size::integer()}).
--record(protocol_list_begin, {etype::integer(), size::integer()}).
--record(protocol_set_begin, {etype::integer(), size::integer()}).
+-record(protocol_field_begin, {name::binary(), type::proto_type()|'field_stop', id::integer()}).
+-record(protocol_map_begin, {ktype::proto_type(), vtype::proto_type(), size::integer()}).
+-record(protocol_list_begin, {etype::proto_type(), size::integer()}).
+-record(protocol_set_begin, {etype::proto_type(), size::integer()}).
 
 -define(tVoidReply_Structure,
         {struct, []}).
