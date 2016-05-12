@@ -2,14 +2,12 @@
 
 -include("ox_thrift_internal.hrl").
 
--export([ write/1
-        , write/2
-        , read/2
-        ]).
-
 -export([ encode_call/4, encode_message/5, decode_message/2 ]).
 
 -include("ox_thrift_protocol.hrl").
+
+-compile({inline, [ write/1, write/2, read/2 ]}).
+%% -compile(inline_list_funcs).
 
 term_to_wire(field_stop)        -> ?tType_STOP;
 term_to_wire(bool)              -> ?tType_BOOL;

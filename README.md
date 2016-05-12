@@ -31,7 +31,7 @@ See the [message protocol documentation](MessageProtocol.md).
 
 ## Other Info
 
-* Anthony pointed me to this talk on
+* Anthony pointed me a talk by [Péter Gömöri](https://github.com/gomoripeti) on
   [The Fun Part of Writing a Thrift Codec](http://www.erlang-factory.com/static/upload/media/1442407543231431thefunpartofwritingathriftcodec.pdf),
   which describes one developer's work to speed up Thrift encoding and
   decoding.  Unfortunately, the code is not public. The author claims
@@ -49,9 +49,8 @@ See the [message protocol documentation](MessageProtocol.md).
 ## Speedup
 
 ```
-(erlang@xfga-e27.xf.dc.openx.org)11> thrift_stats:read().
-[{decode,760902,809709370,1064},
- {encode,618680,477450651,772}]
+[{decode,159370,167525741,1051},
+ {encode,132855,97760667,736}]
 ```
 
 New Code
@@ -59,4 +58,11 @@ New Code
 (erlang@xfga-e27.xf.dc.openx.org)9> ox_thrift_stats:read().
 [{decode,481342,127065950,264},
  {encode,379650,83756142,221}]
+```
+
+With Inline
+
+```
+[{decode,119448,29868742,250},
+ {encode,101370,17324422,171}]
 ```
