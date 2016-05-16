@@ -5,6 +5,8 @@
 -include("test_types.hrl").
 -include("ox_thrift.hrl").
 
+-behaviour(ox_thrift_server).
+
 -export([ handle_function/2, handle_error/2 ]).
 -export([ sum_ints/2, echo/1, throw_exception/1 ]). % Export so that compiler doesn't complain about unused function.
 

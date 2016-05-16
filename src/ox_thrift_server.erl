@@ -13,6 +13,12 @@
           transport,
           config :: #ox_thrift_config{} }).
 
+
+-callback handle_function(Function::atom(), Args::list()) -> 'ok' | {'reply', Reply::term()}.
+
+-callback handle_error(Function::atom(), Reason::term()) -> Ignored::term().
+
+
 -define(RECV_TIMEOUT, infinity).
 
 start_link (Ref, Socket, Transport, Opts) ->
