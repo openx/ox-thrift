@@ -1,6 +1,14 @@
 -ifndef(_ox_thrift_internal_included).
 -define(_ox_thrift_internal_included, true).
 
+
+-record(ts_config, {
+          service_module :: atom(),
+          codec_module :: atom(),
+          handler_module :: atom(),
+          stats_module :: atom() }).
+
+
 %% TType
 -define(tType_STOP, 0).
 -define(tType_VOID, 1).

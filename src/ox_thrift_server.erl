@@ -7,11 +7,12 @@
 
 -export([ start_link/4, handle_request/2 ]).
 -export([ init/4 ]).
+-export([ parse_config/1 ]). %% Exported for unit tests.
 
 -record(ts_state, {
           socket,
           transport,
-          config :: #ox_thrift_config{} }).
+          config :: #ts_config{} }).
 
 
 -callback handle_function(Function::atom(), Args::list()) -> 'ok' | {'reply', Reply::term()}.
@@ -29,10 +30,28 @@ start_link (Ref, Socket, Transport, Opts) ->
 init (Ref, Socket, Transport, Config) ->
   ?LOG("ox_thrift_server:init ~p ~p ~p ~p\n", [ Ref, Socket, Transport, Config ]),
   ok = ranch:accept_ack(Ref),
-  loop(#ts_state{socket = Socket, transport = Transport, config = Config}).
+
+  TSConfig = parse_config(Config),
+
+  loop(#ts_state{socket = Socket, transport = Transport, config = TSConfig}).
 
 
-loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ox_thrift_config{handler_module=HandlerModule}}) ->
+-spec parse_config(#ox_thrift_config{}) -> #ts_config{}.
+parse_config (#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, handler_module=HandlerModule, options=Options}) ->
+  Config0 = #ts_config{
+               service_module = ServiceModule,
+               codec_module = CodecModule,
+               handler_module = HandlerModule},
+  parse_options(Options, Config0).
+
+
+parse_options ([ {stats_module, StatsModule} | Options ], Config) when is_atom(StatsModule) ->
+  parse_options(Options, Config#ts_config{stats_module = StatsModule});
+parse_options ([], Config) ->
+  Config.
+
+
+loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ts_config{handler_module=HandlerModule}}) ->
   %% Implement thrift_framed_transport.
 
   %% Read the length, and then the request data.
@@ -79,8 +98,8 @@ loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ox_thri
   end.
 
 
--spec handle_request(Config::#ox_thrift_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom()}.
-handle_request (Config=#ox_thrift_config{handler_module=HandlerModule}, RequestData) ->
+-spec handle_request(Config::#ts_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom()}.
+handle_request (Config=#ts_config{handler_module=HandlerModule}, RequestData) ->
   %% Should do a try block around decode_message. @@
   {Function, CallType, SeqId, Args} = decode(Config, RequestData),
 
@@ -110,10 +129,10 @@ handle_request (Config=#ox_thrift_config{handler_module=HandlerModule}, RequestD
   {ResultMsg, Function}.
 
 
-decode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, RequestData) ->
+decode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, RequestData) ->
   %% Decode, not collecting stats.
   CodecModule:decode_message(ServiceModule, RequestData);
-decode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=StatsModule}, RequestData) ->
+decode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=StatsModule}, RequestData) ->
   %% Decode, collecting stats.
   {Elapsed, Result} = timer:tc(CodecModule, decode_message, [ ServiceModule, RequestData ]),
   Function = element(1, Result),
@@ -121,10 +140,10 @@ decode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule,
   Result.
 
 
-encode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, Function, MessageType, SeqId, Args) ->
+encode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, Function, MessageType, SeqId, Args) ->
   %% Encode, not collecting stats.
   CodecModule:encode_message(ServiceModule, Function, MessageType, SeqId, Args);
-encode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=StatsModule}, Function, MessageType, SeqId, Args) ->
+encode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=StatsModule}, Function, MessageType, SeqId, Args) ->
   %% Encode, collecting stats.
   {Elapsed, Result} = timer:tc(CodecModule, encode_message, [ ServiceModule, Function, MessageType, SeqId, Args ]),
   StatsModule:handle_stat(Function, encode_time, Elapsed),

@@ -1,10 +1,11 @@
 -module(direct_transport).
 
 -include("ox_thrift.hrl").
+-include("../src/ox_thrift_internal.hrl").
 
 %%% A dummy transport that provides the interface required by
 %%% `ox_thrift_client'.  This transport calls the thrift server directly
-%%% instead of through a socket, and uses the process dictioary to remember
+%%% instead of through a socket, and uses the process dictionary to remember
 %%% the thrift function's return value between calls to `send' and `recv'.
 
 -export([ send/2, recv/2, close/1, make_get_socket/4 ]).
@@ -12,7 +13,8 @@
 send (Config=#ox_thrift_config{}, Request) ->
   <<RequestLength:32/big-signed, RequestBin/binary>> = iolist_to_binary(Request),
   io:format(standard_io, "request: ~p, ~p\n", [ RequestLength, RequestBin ]),
-  {Reply, _Function} = ox_thrift_server:handle_request(Config, RequestBin),
+  TSConfig = ox_thrift_server:parse_config(Config),
+  {Reply, _Function} = ox_thrift_server:handle_request(TSConfig, RequestBin),
   case Reply of
     noreply -> ok;
     _       -> ReplyBin = iolist_to_binary(Reply),
@@ -33,7 +35,11 @@ close (_Socket) ->
 -spec make_get_socket(Service::atom(), Codec::atom(), Handler::atom(), StatsModule::atom()) ->
                          GetSocketFun::fun(() -> Socket::term()).
 make_get_socket (Service, Codec, Handler, StatsModule) ->
-  Config = #ox_thrift_config{service_module=Service, codec_module=Codec, handler_module=Handler, stats_module=StatsModule},
+  Config = #ox_thrift_config{
+              service_module = Service,
+              codec_module = Codec,
+              handler_module = Handler,
+              options = [ {stats_module, StatsModule} ]},
   fun () ->
       put(?MODULE, <<>>),                       % Reset the buffer.
       Config

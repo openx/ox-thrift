@@ -1,11 +1,14 @@
 -ifndef(OX_THRIFT_HRL_INCLUDED).
 -define(OX_THRIFT_HRL_INCLUDED, true).
 
+-type ox_thrift_option() ::
+        { stats_module, StatsModule :: atom() }.
+
 -record(ox_thrift_config, {
           service_module :: atom(),
           codec_module :: atom(),
           handler_module :: atom(),
-          stats_module = undefined :: atom() }).
+          options = [] :: list(ox_thrift_option()) }).
 
 -define(tApplicationException_UNKNOWN, 0).
 -define(tApplicationException_UNKNOWN_METHOD, 1).

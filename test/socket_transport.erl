@@ -45,7 +45,7 @@ start_server (Port, ServiceModule, CodecModule, HandlerModule, StatsModule) ->
               service_module = ServiceModule,
               codec_module = CodecModule,
               handler_module = HandlerModule,
-              stats_module = StatsModule},
+              options = [ {stats_module, StatsModule} ] },
   case ranch:start_listener(?SERVICE_REF, 2, ranch_tcp, [ {port, Port} ], ox_thrift_server, Config) of
     {ok, _} -> ok;
     {error,{already_started,_}} -> ok

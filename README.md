@@ -124,8 +124,14 @@ handle_error(Function, Reason) ->
 
 #### Stats Collection
 
-The OX Thrift server will optionally call back a stats-collection
-function that you define.
+The OX Thrift server will optionally call a `handle_stat` function in
+a module that you define when you start the Ranch listener.
+
+``` erlang
+#ox_thrift_config{options = [ { stats_module, StatsModule } ]}
+```
+
+The interface for the stats-collection function is:
 
 ``` erlang
 handle_stat (Function, Stat, Value) ->
