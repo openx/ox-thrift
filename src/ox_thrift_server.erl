@@ -35,6 +35,7 @@ init (Ref, Socket, Transport, Config) ->
 loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ox_thrift_config{handler_module=HandlerModule}}) ->
   %% Implement thrift_framed_transport.
 
+  %% Read the length, and then the request data.
   Result0 =
     %% Result0 will be `{ok, Packet}' or `{error, Reason}'.
     case Transport:recv(Socket, 4, ?RECV_TIMEOUT) of
@@ -47,6 +48,7 @@ loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ox_thri
 
   ?LOG("recv -> ~p\n", [ Result0 ]),
 
+  %% Call the handler for the function.
   {Result1, Function} =
     %% Result1 will be `ok' or `{error, Reason}'.
     case Result0 of
@@ -78,35 +80,52 @@ loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ox_thri
 
 
 -spec handle_request(Config::#ox_thrift_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom()}.
-handle_request (#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, handler_module=HandlerModule}, RequestData) ->
+handle_request (Config=#ox_thrift_config{handler_module=HandlerModule}, RequestData) ->
   %% Should do a try block around decode_message. @@
-  {DecodeMilliSeconds, {Function, CallType, SeqId, Args}} =
-    timer:tc(CodecModule, decode_message, [ ServiceModule, RequestData ]),
-  ox_thrift_stats:record(decode, DecodeMilliSeconds),
+  {Function, CallType, SeqId, Args} = decode(Config, RequestData),
 
-  {EncodeMilliSeconds, ResultMsg} =
+  ResultMsg =
     try
       ?LOG("call ~p:handle_function(~p, ~p)\n", [ HandlerModule, Function, Args ]),
       Result = HandlerModule:handle_function(Function, Args),
       ?LOG("result ~p ~p\n", [ CallType, Result ]),
       case {CallType, Result} of
         {call, {reply, Reply}} ->
-          timer:tc(CodecModule, encode_message, [ ServiceModule, Function, reply_normal, SeqId, Reply ]);
+          encode(Config, Function, reply_normal, SeqId, Reply);
         {call, ok} ->
-          timer:tc(CodecModule, encode_message, [ ServiceModule, Function, reply_normal, SeqId, undefined ]);
+          encode(Config, Function, reply_normal, SeqId, undefined);
         {call_oneway, ok} ->
-          {0, noreply}
+          noreply
       end
     catch
       throw:Reason ->
-        timer:tc(CodecModule, encode_message, [ ServiceModule, Function , reply_exception, SeqId, Reason ]);
+        encode(Config, Function , reply_exception, SeqId, Reason);
       error:Reason ->
         Message = ox_thrift_util:format_error_message(Reason),
         ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
-        timer:tc(CodecModule, encode_message, [ ServiceModule, Function, exception, SeqId, ExceptionReply ])
+        encode(Config, Function, exception, SeqId, ExceptionReply)
     end,
-  ResultMsg =/= noreply andalso
-    ox_thrift_stats:record(encode, EncodeMilliSeconds),
 
   %% ?LOG("handle_request -> ~p\n", [ {ResultMsg, Function } ]),
   {ResultMsg, Function}.
+
+
+decode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, RequestData) ->
+  %% Decode, not collecting stats.
+  CodecModule:decode_message(ServiceModule, RequestData);
+decode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=StatsModule}, RequestData) ->
+  %% Decode, collecting stats.
+  {Elapsed, Result} = timer:tc(CodecModule, decode_message, [ ServiceModule, RequestData ]),
+  Function = element(1, Result),
+  StatsModule:handle_stat(Function, decode_time, Elapsed),
+  Result.
+
+
+encode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, Function, MessageType, SeqId, Args) ->
+  %% Encode, not collecting stats.
+  CodecModule:encode_message(ServiceModule, Function, MessageType, SeqId, Args);
+encode(#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=StatsModule}, Function, MessageType, SeqId, Args) ->
+  %% Encode, collecting stats.
+  {Elapsed, Result} = timer:tc(CodecModule, encode_message, [ ServiceModule, Function, MessageType, SeqId, Args ]),
+  StatsModule:handle_stat(Function, encode_time, Elapsed),
+  Result.

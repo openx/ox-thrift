@@ -100,7 +100,6 @@ ranch:start_listener(?THRIFT_SERVICE_REF,
                         service_module = service_thrift,
                         codec_module = ox_thrift_protocol_binary,
                         handler_module = ?MODULE}).
-
 ```
 
 Your Thrift server must supply two functions, `handle_function` and
@@ -120,8 +119,23 @@ handle_function (Function, Args) when is_atom(Function), is_list(Args) ->
   end.
 
 handle_error(Function, Reason) ->
-  ok;
+  ok.
 ```
+
+#### Stats Collection
+
+The OX Thrift server will optionally call back a stats-collection
+function that you define.
+
+``` erlang
+handle_stat (Function, Stat, Value) ->
+  ok.
+```
+
+The statistics currently collected are:
+* `decode_time`: The call arguments decoding time in microseconds.
+* `encode_time`: The call reply encoding time in microseconds.
+
 
 ## Speedup
 

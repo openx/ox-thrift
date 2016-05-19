@@ -7,7 +7,7 @@
 %%% instead of through a socket, and uses the process dictioary to remember
 %%% the thrift function's return value between calls to `send' and `recv'.
 
--export([ send/2, recv/2, close/1, make_get_socket/3 ]).
+-export([ send/2, recv/2, close/1, make_get_socket/4 ]).
 
 send (Config=#ox_thrift_config{}, Request) ->
   <<RequestLength:32/big-signed, RequestBin/binary>> = iolist_to_binary(Request),
@@ -30,10 +30,10 @@ recv (_Socket, Length) ->
 close (_Socket) ->
   ok.
 
--spec make_get_socket(Service::atom(), Codec::atom(), Handler::atom()) ->
+-spec make_get_socket(Service::atom(), Codec::atom(), Handler::atom(), StatsModule::atom()) ->
                          GetSocketFun::fun(() -> Socket::term()).
-make_get_socket (Service, Codec, Handler) ->
-  Config = #ox_thrift_config{service_module=Service, codec_module=Codec, handler_module=Handler},
+make_get_socket (Service, Codec, Handler, StatsModule) ->
+  Config = #ox_thrift_config{service_module=Service, codec_module=Codec, handler_module=Handler, stats_module=StatsModule},
   fun () ->
       put(?MODULE, <<>>),                       % Reset the buffer.
       Config

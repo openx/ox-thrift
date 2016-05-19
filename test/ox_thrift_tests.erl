@@ -7,12 +7,14 @@
 
 -behaviour(ox_thrift_server).
 
--export([ handle_function/2, handle_error/2 ]).
+-export([ handle_function/2, handle_error/2, handle_stat/3 ]).
 -export([ sum_ints/2, echo/1, throw_exception/1 ]). % Export so that compiler doesn't complain about unused function.
 
 -define(SERVICE, test_service_thrift).
 -define(PROTOCOL, ox_thrift_protocol_binary).
 -define(HANDLER, ?MODULE).
+-define(STATS_MODULE, ?MODULE).
+-define(STATS_TABLE, ox_thrift_stats).
 
 %% -define(USE_DIRECT, true).
 
@@ -21,12 +23,14 @@
 -define(TRANSPORT, direct_transport).
 
 new_client () ->
-  SocketFun = ?TRANSPORT:make_get_socket(?SERVICE, ?PROTOCOL, ?HANDLER),
+  create_stats_table(),
+  SocketFun = ?TRANSPORT:make_get_socket(?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
   {ok, Client} = ox_thrift_client:new(SocketFun, ?TRANSPORT, ?PROTOCOL, ?SERVICE),
   Client.
 
 destroy_client (Client) ->
   ox_thrift_client:close(Client),
+  destroy_stats_table(),
   ok.
 
 -else. %% ! USE_DIRECT
@@ -35,7 +39,8 @@ destroy_client (Client) ->
 -define(PORT, 8024).
 
 new_client () ->
-  ?TRANSPORT:start_server(?PORT, ?SERVICE, ?PROTOCOL, ?HANDLER),
+  create_stats_table(),
+  ?TRANSPORT:start_server(?PORT, ?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
   SocketFun = ?TRANSPORT:make_get_socket(?PORT),
   {ok, Client} = ox_thrift_client:new(SocketFun, ?TRANSPORT, ?PROTOCOL, ?SERVICE),
   Client.
@@ -43,9 +48,26 @@ new_client () ->
 destroy_client (Client) ->
   ox_thrift_client:close(Client),
   ?TRANSPORT:stop_server(),
+  destroy_stats_table(),
   ok.
 
 -endif. %% ! USE_DIRECT
+
+
+create_stats_table () ->
+  case ets:info(?STATS_TABLE, size) of
+    Size when is_integer(Size) ->
+      %% Table already exists.  EUnit runs tests in parallel, so it's easier
+      %% to just create the ets table if it doesn't exist than to create and
+      %% destroy the table for each test.
+      ok;
+    undefined ->
+      ets:new(?STATS_TABLE, [ named_table, public ])
+  end.
+
+destroy_stats_table () ->
+  ok.
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -57,6 +79,13 @@ add_one_test () ->
 
   {Client2, Reply2} = ox_thrift_client:call(Client1, add_one, [ 42 ]),
   ?assertEqual(43, Reply2),
+
+  %% Check that stats were recorded.
+  ?assertMatch([ {{add_one, encode_time}, EncodeMillis} ] when EncodeMillis > 0,
+               ets:lookup(?STATS_TABLE, {add_one, encode_time})),
+
+  ?assertMatch([ {{add_one, decode_time}, DecodeMillis} ] when DecodeMillis > 0,
+               ets:lookup(?STATS_TABLE, {add_one, decode_time})),
 
   destroy_client(Client2).
 
@@ -157,6 +186,13 @@ handle_function (Function, Args) ->
 
 handle_error (_Function, _Reason) ->
   %% io:format(standard_error, "handle_error ~p ~p\n", [ _Function, _Reason ]),
+  ok.
+
+handle_stat (Function, Type, Value) ->
+  try ets:update_counter(?STATS_TABLE, {Function, Type}, [ 2, Value ])
+  catch error:badarg ->
+      ets:insert_new(?STATS_TABLE, {{Function, Type}, Value})
+  end,
   ok.
 
 sum_ints (#'Container'{first_field=FirstInt, second_struct=SecondStruct, third_field=ThirdInt}, SecondArg) ->

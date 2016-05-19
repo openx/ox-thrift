@@ -3,7 +3,7 @@
 -include("ox_thrift.hrl").
 -include("../src/ox_thrift_internal.hrl").
 
--export([ send/2, recv/2, close/1, make_get_socket/1, start_server/4, stop_server/0 ]).
+-export([ send/2, recv/2, close/1, make_get_socket/1, start_server/5, stop_server/0 ]).
 
 -define(LOCALHOST, "127.0.0.1").
 
@@ -34,7 +34,7 @@ make_get_socket (Port) ->
 
 -define(SERVICE_REF, test_service).
 
-start_server (Port, ServiceModule, CodecModule, HandlerModule) ->
+start_server (Port, ServiceModule, CodecModule, HandlerModule, StatsModule) ->
   case application:start(ranch) of
     ok                              -> ok;
     {error,{already_started,ranch}} -> ok;
@@ -44,7 +44,8 @@ start_server (Port, ServiceModule, CodecModule, HandlerModule) ->
   Config = #ox_thrift_config{
               service_module = ServiceModule,
               codec_module = CodecModule,
-              handler_module = HandlerModule},
+              handler_module = HandlerModule,
+              stats_module = StatsModule},
   case ranch:start_listener(?SERVICE_REF, 2, ranch_tcp, [ {port, Port} ], ox_thrift_server, Config) of
     {ok, _} -> ok;
     {error,{already_started,_}} -> ok

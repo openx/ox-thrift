@@ -221,7 +221,7 @@ encode_struct ([], _Record, _I) ->
 
 -spec decode_message(ServiceModule::atom(), Buffer::binary()) ->
                         {Function::atom(), MessageType::message_type(), Seqid::integer(), Args::term()}.
-%% `MessageType' is `?tMessageType_CALL' or `?tMessageType_ONEWAY'.
+%% `MessageType' is `?tMessageType_CALL', `?tMessageType_ONEWAY', `?tMessageReply', or `?tMessageException'.
 decode_message (ServiceModule, Buffer0) ->
   {Buffer1, #protocol_message_begin{name=FunctionBin, type=ThriftMessageType, seqid=SeqId}} =
     read(Buffer0, message_begin),
