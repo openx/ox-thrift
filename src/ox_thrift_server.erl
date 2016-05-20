@@ -51,50 +51,53 @@ parse_options ([], Config) ->
   Config.
 
 
-loop (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ts_config{handler_module=HandlerModule}}) ->
+loop (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule}}) ->
   %% Implement thrift_framed_transport.
 
   %% Read the length, and then the request data.
-  Result0 =
-    %% Result0 will be `{ok, Packet}' or `{error, Reason}'.
-    case Transport:recv(Socket, 4, ?RECV_TIMEOUT) of
-      {ok, LengthBin} ->
-        <<Length:32/integer-signed-big>> = LengthBin,
-        Transport:recv(Socket, Length, ?RECV_TIMEOUT);
-      Error0 ->
-        Error0
-    end,
-
-  ?LOG("recv -> ~p\n", [ Result0 ]),
-
-  %% Call the handler for the function.
-  {Result1, Function} =
-    %% Result1 will be `ok' or `{error, Reason}'.
-    case Result0 of
-      {ok, RequestData} ->
-        case handle_request(Config, RequestData) of
-          {noreply, Function1} ->
-            %% Oneway void function.
-            {ok, Function1};
-          {ReplyData, Function1} ->
-            %% Normal function.
-            ReplyLen = iolist_size(ReplyData),
-            Reply = [ <<ReplyLen:32/big-signed>>, ReplyData ],
-            X = Transport:send(Socket, Reply),
-            ?LOG("server send(~p, ~p) -> ~p\n", [ Socket, Reply, X ]),
-            {X, Function1}
-        end;
-      Error1 ->
-        {Error1, undefined}
-    end,
-
-  case Result1 of
-    ok ->
-      loop(State);
+  %% Result0 will be `{ok, Packet}' or `{error, Reason}'.
+  case Transport:recv(Socket, 4, ?RECV_TIMEOUT) of
+    {ok, LengthBin} ->
+      <<Length:32/integer-signed-big>> = LengthBin,
+      loop1(State, Length);
     {error, Reason} ->
-      HandlerModule:handle_error(Function, Reason),
+      HandlerModule:handle_error(undefined, Reason),
       Transport:close(Socket)
       %% Return from loop on error.
+  end.
+
+loop1 (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule}}, Length) ->
+  RecvResult = Transport:recv(Socket, Length, ?RECV_TIMEOUT),
+  ?LOG("server recv(~p, ~p) -> ~p\n", [ Socket, Length, RecvResult ]),
+  case RecvResult of
+    {ok, RequestData} ->
+      loop2(State, RequestData);
+    {error, Reason} ->
+      HandlerModule:handle_error(undefined, Reason),
+      Transport:close(Socket)
+      %% Return from loop on error.
+  end.
+
+loop2 (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ts_config{handler_module=HandlerModule}}, RequestData) ->
+  {ReplyData, Function} = handle_request(Config, RequestData),
+  case ReplyData of
+    noreply ->
+      %% Oneway void function.
+      loop(State);
+    _ ->
+      %% Normal function.
+      ReplyLen = iolist_size(ReplyData),
+      Reply = [ <<ReplyLen:32/big-signed>>, ReplyData ],
+      SendResult = Transport:send(Socket, Reply),
+      ?LOG("server send(~p, ~p) -> ~p\n", [ Socket, Reply, SendResult ]),
+      case SendResult of
+        ok ->
+          loop(State);
+        {error, Reason} ->
+          HandlerModule:handle_error(Function, Reason),
+          Transport:close(Socket)
+          %% Return from loop on error.
+      end
   end.
 
 
