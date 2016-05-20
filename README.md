@@ -153,6 +153,8 @@ handle_stat (Function, Stat, Value) ->
 The statistics currently collected are:
 * `decode_time`: The call arguments decoding time in microseconds.
 * `encode_time`: The call reply encoding time in microseconds.
+* `connect_time`: The total connect time in microseconds.
+* `call_count`: The number of calls to the Thrift server.
 
 
 ## Speedup

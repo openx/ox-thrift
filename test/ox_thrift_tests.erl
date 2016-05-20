@@ -80,14 +80,26 @@ add_one_test () ->
   {Client2, Reply2} = ox_thrift_client:call(Client1, add_one, [ 42 ]),
   ?assertEqual(43, Reply2),
 
+  Client3 = ox_thrift_client:close(Client2),
+
+  %% Wait until server notices that connection was closed.
+  timer:sleep(100),
+
   %% Check that stats were recorded.
-  ?assertMatch([ {{add_one, encode_time}, EncodeMillis} ] when EncodeMillis > 0,
+  %% io:format(standard_error, "~p\n", [ ets:tab2list(?STATS_TABLE) ]),
+  ?assertMatch([ {{add_one, encode_time}, 2, EncodeMillis} ] when EncodeMillis > 0,
                ets:lookup(?STATS_TABLE, {add_one, encode_time})),
 
-  ?assertMatch([ {{add_one, decode_time}, DecodeMillis} ] when DecodeMillis > 0,
+  ?assertMatch([ {{add_one, decode_time}, 2, DecodeMillis} ] when DecodeMillis > 0,
                ets:lookup(?STATS_TABLE, {add_one, decode_time})),
 
-  destroy_client(Client2).
+  ?assertMatch([ {call_count, 2} ],
+               ets:lookup(?STATS_TABLE, call_count)),
+
+  ?assertMatch([ {connect_time, ConnectMillis} ] when ConnectMillis > 0,
+               ets:lookup(?STATS_TABLE, connect_time)),
+
+  destroy_client(Client3).
 
 
 sum_ints_test () ->
@@ -189,9 +201,21 @@ handle_error (_Function, _Reason) ->
   ok.
 
 handle_stat (Function, Type, Value) ->
-  try ets:update_counter(?STATS_TABLE, {Function, Type}, [ 2, Value ])
+  %% io:format(standard_error, "handle_stat ~p ~p ~p\n", [ Function, Type, Value ]),
+  {Key, Increment} =
+    case Type of
+      call_count   -> {Type, {2, Value}};
+      connect_time -> {Type, {2, Value}};
+      decode_time  -> {{Function, Type}, [ {2, 1}, {3, Value} ]};
+      encode_time  -> {{Function, Type}, [ {2, 1}, {3, Value} ]}
+    end,
+  try ets:update_counter(?STATS_TABLE, Key, Increment)
   catch error:badarg ->
-      ets:insert_new(?STATS_TABLE, {{Function, Type}, Value})
+      IncrementList = if is_list(Increment)    -> Increment;
+                         is_tuple(Increment)   -> [ Increment ];
+                         is_integer(Increment) -> [ {2, Increment} ]
+                      end,
+      ets:insert_new(?STATS_TABLE, erlang:make_tuple(length(IncrementList) + 1, 0, [ {1, Key} | IncrementList ]))
   end,
   ok.
 

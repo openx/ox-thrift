@@ -12,7 +12,9 @@
 -record(ts_state, {
           socket,
           transport,
-          config :: #ts_config{} }).
+          config :: #ts_config{},
+          call_count = 0 :: non_neg_integer(),
+          connect_time = os:timestamp() :: erlang:timestamp() }).
 
 
 -type reply_options() :: 'undefined' | 'close'.
@@ -54,7 +56,7 @@ parse_options ([], Config) ->
   Config.
 
 
-loop (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule}}) ->
+loop (State=#ts_state{socket=Socket, transport=Transport}) ->
   %% Implement thrift_framed_transport.
 
   %% Read the length, and then the request data.
@@ -62,26 +64,24 @@ loop (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{hand
   case Transport:recv(Socket, 4, ?RECV_TIMEOUT) of
     {ok, LengthBin} ->
       <<Length:32/integer-signed-big>> = LengthBin,
-      loop1(State, Length);
+      loop1(State#ts_state{call_count = State#ts_state.call_count + 1}, Length);
     {error, Reason} ->
-      HandlerModule:handle_error(undefined, Reason),
-      Transport:close(Socket)
+      handle_error(State, undefined, Reason)
       %% Return from loop on error.
   end.
 
-loop1 (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule}}, Length) ->
+loop1 (State=#ts_state{socket=Socket, transport=Transport}, Length) ->
   RecvResult = Transport:recv(Socket, Length, ?RECV_TIMEOUT),
   ?LOG("server recv(~p, ~p) -> ~p\n", [ Socket, Length, RecvResult ]),
   case RecvResult of
     {ok, RequestData} ->
       loop2(State, RequestData);
     {error, Reason} ->
-      HandlerModule:handle_error(undefined, Reason),
-      Transport:close(Socket)
+      handle_error(State, undefined, Reason)
       %% Return from loop on error.
   end.
 
-loop2 (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ts_config{handler_module=HandlerModule}}, RequestData) ->
+loop2 (State=#ts_state{socket=Socket, transport=Transport, config=Config}, RequestData) ->
   {ReplyData, Function, ReplyOptions} = handle_request(Config, RequestData),
   case ReplyData of
     noreply ->
@@ -97,19 +97,17 @@ loop2 (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ts_con
         ok ->
           loop3(State, Function, ReplyOptions);
         {error, Reason} ->
-          HandlerModule:handle_error(Function, Reason),
-          Transport:close(Socket)
+          handle_error(State, Function, Reason)
           %% Return from loop on error.
       end
   end.
 
-loop3 (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule}}, Function, ReplyOptions) ->
+loop3 (State, Function, ReplyOptions) ->
   case ReplyOptions of
     undefined ->
       loop(State);
     close ->
-      HandlerModule:handle_error(Function, closed),
-      Transport:close(Socket)
+      handle_error(State, Function, closed)
       %% Return from loop when server requests close.
   end.
 
@@ -147,6 +145,16 @@ reply_options ({reply, Reply})          -> {Reply, undefined};
 reply_options (ok)                      -> {undefined, undefined};
 reply_options ({reply, Reply, Options}) -> {Reply, Options};
 reply_options ({ok, Options})           -> {undefined, Options}.
+
+
+handle_error (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule, stats_module=StatsModule}}, Function, Reason) ->
+  StatsModule =/= undefined andalso
+    begin
+      StatsModule:handle_stat(Function, connect_time, timer:now_diff(os:timestamp(), State#ts_state.connect_time)),
+      StatsModule:handle_stat(Function, call_count, State#ts_state.call_count)
+    end,
+  HandlerModule:handle_error(Function, Reason),
+  Transport:close(Socket).
 
 
 decode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, RequestData) ->
