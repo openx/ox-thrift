@@ -15,7 +15,10 @@
           config :: #ts_config{} }).
 
 
--callback handle_function(Function::atom(), Args::list()) -> 'ok' | {'reply', Reply::term()}.
+-type reply_options() :: 'undefined' | 'close'.
+
+-callback handle_function(Function::atom(), Args::list()) ->
+  'ok' | {'reply', Reply::term()} | {ok, reply_options()} | {'reply', Reply::term(), reply_options()}.
 
 -callback handle_error(Function::atom(), Reason::term()) -> Ignored::term().
 
@@ -79,11 +82,11 @@ loop1 (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{han
   end.
 
 loop2 (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ts_config{handler_module=HandlerModule}}, RequestData) ->
-  {ReplyData, Function} = handle_request(Config, RequestData),
+  {ReplyData, Function, ReplyOptions} = handle_request(Config, RequestData),
   case ReplyData of
     noreply ->
       %% Oneway void function.
-      loop(State);
+      loop3(State, Function, ReplyOptions);
     _ ->
       %% Normal function.
       ReplyLen = iolist_size(ReplyData),
@@ -92,7 +95,7 @@ loop2 (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ts_con
       ?LOG("server send(~p, ~p) -> ~p\n", [ Socket, Reply, SendResult ]),
       case SendResult of
         ok ->
-          loop(State);
+          loop3(State, Function, ReplyOptions);
         {error, Reason} ->
           HandlerModule:handle_error(Function, Reason),
           Transport:close(Socket)
@@ -100,36 +103,50 @@ loop2 (State=#ts_state{socket=Socket, transport=Transport, config=Config=#ts_con
       end
   end.
 
+loop3 (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule}}, Function, ReplyOptions) ->
+  case ReplyOptions of
+    undefined ->
+      loop(State);
+    close ->
+      HandlerModule:handle_error(Function, closed),
+      Transport:close(Socket)
+      %% Return from loop when server requests close.
+  end.
 
--spec handle_request(Config::#ts_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom()}.
+
+-spec handle_request(Config::#ts_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom(), ReplyOptions::reply_options()}.
 handle_request (Config=#ts_config{handler_module=HandlerModule}, RequestData) ->
   %% Should do a try block around decode_message. @@
   {Function, CallType, SeqId, Args} = decode(Config, RequestData),
 
-  ResultMsg =
+  {ResultMsg, ReplyOptions} =
     try
       ?LOG("call ~p:handle_function(~p, ~p)\n", [ HandlerModule, Function, Args ]),
       Result = HandlerModule:handle_function(Function, Args),
       ?LOG("result ~p ~p\n", [ CallType, Result ]),
-      case {CallType, Result} of
-        {call, {reply, Reply}} ->
-          encode(Config, Function, reply_normal, SeqId, Reply);
-        {call, ok} ->
-          encode(Config, Function, reply_normal, SeqId, undefined);
-        {call_oneway, ok} ->
-          noreply
-      end
+      {Reply, ReplyOptions0} = reply_options(Result),
+      R = case {CallType, Reply} of
+            {call, Reply}            -> encode(Config, Function, reply_normal, SeqId, Reply);
+            {call_oneway, undefined} -> noreply
+          end,
+      {R, ReplyOptions0}
     catch
       throw:Reason ->
-        encode(Config, Function , reply_exception, SeqId, Reason);
+        {encode(Config, Function, reply_exception, SeqId, Reason), undefined};
       error:Reason ->
         Message = ox_thrift_util:format_error_message(Reason),
         ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
-        encode(Config, Function, exception, SeqId, ExceptionReply)
+        {encode(Config, Function, exception, SeqId, ExceptionReply), undefined}
     end,
 
   %% ?LOG("handle_request -> ~p\n", [ {ResultMsg, Function } ]),
-  {ResultMsg, Function}.
+  {ResultMsg, Function, ReplyOptions}.
+
+
+reply_options ({reply, Reply})          -> {Reply, undefined};
+reply_options (ok)                      -> {undefined, undefined};
+reply_options ({reply, Reply, Options}) -> {Reply, Options};
+reply_options ({ok, Options})           -> {undefined, Options}.
 
 
 decode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, RequestData) ->

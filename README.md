@@ -122,6 +122,18 @@ handle_error(Function, Reason) ->
   ok.
 ```
 
+The `handle_function` function may return `ok` for a void function, or
+`{reply, Reply}` for a non-void function.  In addition, the function
+may request that the Thrift server close the client's connection after
+returning the reply by returning `{ok, close}` for a void function or
+`{reply, Reply, close}` for a non-void function.
+
+If the Thrift function wants to return one of its declared exceptions,
+`E`, it may call `{throw, E}`.  The Thrift server will catch the
+exception and return a message to the client, where the exception will
+be re-thrown.
+
+
 #### Stats Collection
 
 The OX Thrift server will optionally call a `handle_stat` function in

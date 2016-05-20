@@ -14,7 +14,7 @@ send (Config=#ox_thrift_config{}, Request) ->
   <<RequestLength:32/big-signed, RequestBin/binary>> = iolist_to_binary(Request),
   io:format(standard_io, "request: ~p, ~p\n", [ RequestLength, RequestBin ]),
   TSConfig = ox_thrift_server:parse_config(Config),
-  {Reply, _Function} = ox_thrift_server:handle_request(TSConfig, RequestBin),
+  {Reply, _Function, _ReplyOptions} = ox_thrift_server:handle_request(TSConfig, RequestBin),
   case Reply of
     noreply -> ok;
     _       -> ReplyBin = iolist_to_binary(Reply),
