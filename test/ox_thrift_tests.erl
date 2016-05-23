@@ -16,42 +16,32 @@
 -define(STATS_MODULE, ?MODULE).
 -define(STATS_TABLE, ox_thrift_stats).
 
-%% -define(USE_DIRECT, true).
-
--ifdef(USE_DIRECT).
-
--define(TRANSPORT, direct_transport).
-
-new_client () ->
+new_client_direct () ->
   create_stats_table(),
-  SocketFun = ?TRANSPORT:make_get_socket(?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
-  {ok, Client} = ox_thrift_client:new(SocketFun, ?TRANSPORT, ?PROTOCOL, ?SERVICE),
+  SocketFun = direct_transport:make_get_socket(?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
+  {ok, Client} = ox_thrift_client:new(SocketFun, direct_transport, ?PROTOCOL, ?SERVICE),
   Client.
 
-destroy_client (Client) ->
+destroy_client_direct (Client) ->
   ox_thrift_client:close(Client),
   destroy_stats_table(),
   ok.
 
--else. %% ! USE_DIRECT
 
--define(TRANSPORT, socket_transport).
 -define(PORT, 8024).
 
-new_client () ->
+new_client_socket () ->
   create_stats_table(),
-  ?TRANSPORT:start_server(?PORT, ?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
-  SocketFun = ?TRANSPORT:make_get_socket(?PORT),
-  {ok, Client} = ox_thrift_client:new(SocketFun, ?TRANSPORT, ?PROTOCOL, ?SERVICE),
+  socket_transport:start_server(?PORT, ?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
+  SocketFun = socket_transport:make_get_socket(?PORT),
+  {ok, Client} = ox_thrift_client:new(SocketFun, socket_transport, ?PROTOCOL, ?SERVICE),
   Client.
 
-destroy_client (Client) ->
+destroy_client_socket (Client) ->
   ox_thrift_client:close(Client),
-  ?TRANSPORT:stop_server(),
+  socket_transport:stop_server(),
   destroy_stats_table(),
   ok.
-
--endif. %% ! USE_DIRECT
 
 
 create_stats_table () ->
@@ -71,8 +61,26 @@ destroy_stats_table () ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-add_one_test () ->
-  Client0 = new_client(),
+direct_test_ () ->
+  make_tests(direct, fun new_client_direct/0, fun destroy_client_direct/1).
+
+socket_test_ () ->
+  make_tests(socket, fun new_client_socket/0, fun destroy_client_socket/1).
+
+-define(F(TestName), fun () -> TestName(TestType, NewClient, DestroyClient) end).
+
+make_tests (TestType, NewClient, DestroyClient) ->
+  [ ?F(add_one_test)
+  , ?F(sum_ints_test)
+  , ?F(all_types_test)
+  , ?F(throw_exception_test)
+  , ?F(cast_test)
+  ].
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+add_one_test (TestType, NewClientFun, DestroyClientFun) ->
+  Client0 = NewClientFun(),
 
   {Client1, Reply1} = ox_thrift_client:call(Client0, add_one, [ 99 ]),
   ?assertEqual(100, Reply1),
@@ -87,23 +95,27 @@ add_one_test () ->
 
   %% Check that stats were recorded.
   %% io:format(standard_error, "~p\n", [ ets:tab2list(?STATS_TABLE) ]),
-  ?assertMatch([ {{add_one, encode_time}, 2, EncodeMillis} ] when EncodeMillis > 0,
+  ?assertMatch([ {{add_one, encode_time}, CallCount, EncodeMillis} ] when CallCount >= 2 andalso EncodeMillis > 0,
                ets:lookup(?STATS_TABLE, {add_one, encode_time})),
 
-  ?assertMatch([ {{add_one, decode_time}, 2, DecodeMillis} ] when DecodeMillis > 0,
+  ?assertMatch([ {{add_one, decode_time}, CallCount, DecodeMillis} ] when CallCount >= 2 andalso DecodeMillis > 0,
                ets:lookup(?STATS_TABLE, {add_one, decode_time})),
 
-  ?assertMatch([ {call_count, 2} ],
-               ets:lookup(?STATS_TABLE, call_count)),
+  TestType =:= socket andalso
+    %% The direct tests don't generate call_count and connect_time stats.
+    begin
+      ?assertMatch([ {call_count, 2} ],
+                   ets:lookup(?STATS_TABLE, call_count)),
 
-  ?assertMatch([ {connect_time, ConnectMillis} ] when ConnectMillis > 0,
-               ets:lookup(?STATS_TABLE, connect_time)),
+      ?assertMatch([ {connect_time, ConnectMillis} ] when ConnectMillis > 0,
+                   ets:lookup(?STATS_TABLE, connect_time))
+    end,
 
-  destroy_client(Client3).
+  DestroyClientFun(Client3).
 
 
-sum_ints_test () ->
-  Client0 = new_client(),
+sum_ints_test (_TestType, NewClientFun, DestroyClientFun) ->
+  Client0 = NewClientFun(),
 
   {Client1, Reply1} = ox_thrift_client:call(Client0, sum_ints, [ #'Container'{first_field = 1, third_field = 10}, 35 ]),
   ?assertEqual(46, Reply1),
@@ -116,10 +128,10 @@ sum_ints_test () ->
                                                             third_field = 64}, 128 ]),
   ?assertEqual(255, Reply2),
 
-  destroy_client(Client2).
+  DestroyClientFun(Client2).
 
 
-all_types_test () ->
+all_types_test (_TestType, NewClientFun, DestroyClientFun) ->
   V = #'AllTypes'{
          bool_field = true,
          byte_field = 42,
@@ -132,16 +144,16 @@ all_types_test () ->
          string_set = sets:from_list([ <<"a">>, <<"bb">>, <<"ccc">> ]),
          string_int_map = dict:from_list([ {<<"I">>, 1}, {<<"V">>, 5}, {<<"X">>, 10} ])},
 
-  Client0 = new_client(),
+  Client0 = NewClientFun(),
 
   {Client1, Reply1} = ox_thrift_client:call(Client0, echo, [ V ]),
   ?assertEqual(V, Reply1),
 
-  destroy_client(Client1).
+  DestroyClientFun(Client1).
 
 
-throw_exception_test () ->
-  Client0 = new_client(),
+throw_exception_test (_TestType, NewClientFun, DestroyClientFun) ->
+  Client0 = NewClientFun(),
 
   {Client1, Reply1} = ox_thrift_client:call(Client0, throw_exception, [ ?TEST_THROWTYPE_NORMALRETURN ]),
   ?assertEqual(101, Reply1),
@@ -173,17 +185,17 @@ throw_exception_test () ->
         Client4a
     end,
 
-  destroy_client(Client4).
+  DestroyClientFun(Client4).
 
 
-cast_test () ->
-  Client0 = new_client(),
+cast_test (_TestType, NewClientFun, DestroyClientFun) ->
+  Client0 = NewClientFun(),
 
   {Client1, Reply1} = ox_thrift_client:call(Client0, cast, [ <<"hello world">> ]),
   ?assertNotEqual(undefined, ox_thrift_client:get_socket(Client1)),
   ?assertEqual(ok, Reply1),
 
-  destroy_client(Client1).
+  DestroyClientFun(Client1).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
