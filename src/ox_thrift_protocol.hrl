@@ -25,10 +25,10 @@ term_to_typeid ({map, _, _})             -> map.
 
 -define(VALIDATE(Expr), (fun () -> Expr end)()).
 
--define(VALIDATE_TYPE(StructType, SuppliedType),
+-define(VALIDATE_TYPE(StructType, SuppliedType, Args),
         case term_to_typeid(StructType) of
           SuppliedType -> ok;
-          _ -> error(type_mismatch, [ {provided, SuppliedType}, {expected, StructType} ])
+          _ -> error({type_mismatch, {provided, SuppliedType}, {expected, StructType}}, Args)
         end).
 
 
@@ -275,24 +275,24 @@ decode (Buffer, {struct, {Schema, StructName}})
   %% Decode a record from a schema module.
   decode_record(Buffer, StructName, Schema:struct_info(StructName));
 
-decode (Buffer0, {list, Type}) ->
+decode (Buffer0, _T={list, Type}) ->
   {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read(Buffer0, list_begin),
-  ?VALIDATE_TYPE(Type, EType),
+  ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_list(Buffer1, Type, [], Size),
   {Buffer3, ok} = read(Buffer2, list_end),
   {Buffer3, List};
 
-decode (Buffer0, {map, KeyType, ValType}) ->
+decode (Buffer0, _T={map, KeyType, ValType}) ->
   {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read(Buffer0, map_begin),
-  ?VALIDATE_TYPE(KeyType, KType),
-  ?VALIDATE_TYPE(ValType, VType),
+  ?VALIDATE_TYPE(KeyType, KType, [ Buffer0, _T ]),
+  ?VALIDATE_TYPE(ValType, VType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, [], Size),
   {Buffer3, ok} = read(Buffer2, map_end),
   {Buffer3, dict:from_list(List)};
 
-decode (Buffer0, {set, Type}) ->
+decode (Buffer0, _T={set, Type}) ->
   {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read(Buffer0, set_begin),
-  ?VALIDATE_TYPE(Type, EType),
+  ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_set(Buffer1, Type, [], Size),
   {Buffer3, ok} = read(Buffer2, set_end),
   {Buffer3, sets:from_list(List)};
@@ -326,7 +326,7 @@ decode_struct (Buffer0, FieldList, Acc) ->
     _ ->
       case keyfind(FieldList, FieldId, 2) of %% inefficient @@
         {FieldTypeAtom, N} ->
-          ?VALIDATE_TYPE(FieldTypeAtom, FieldTId),
+          ?VALIDATE_TYPE(FieldTypeAtom, FieldTId, [ Buffer0, FieldList, Acc ]),
           {Buffer2, Val} = decode(Buffer1, FieldTypeAtom),
           {Buffer3, ok} = read(Buffer2, field_end),
           decode_struct(Buffer3, FieldList, [ {N, Val} | Acc ]);
