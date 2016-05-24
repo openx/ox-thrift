@@ -44,6 +44,17 @@ destroy_client_socket (Client) ->
   ok.
 
 
+new_client_skip () ->
+  SocketFun = direct_transport:make_get_socket(skip_service_thrift, ?PROTOCOL, skip_handler, undefined),
+  %% SocketFun = direct_transport:make_get_socket(?SERVICE, ?PROTOCOL, ?MODULE, undefined),
+  {ok, Client} = ox_thrift_client:new(SocketFun, direct_transport, ?PROTOCOL, ?SERVICE),
+  Client.
+
+destroy_client_skip (Client) ->
+  ox_thrift_client:close(Client),
+  ok.
+
+
 create_stats_table () ->
   case ets:info(?STATS_TABLE, size) of
     Size when is_integer(Size) ->
@@ -66,6 +77,37 @@ direct_test_ () ->
 
 socket_test_ () ->
   make_tests(socket, fun new_client_socket/0, fun destroy_client_socket/1).
+
+skip_test () ->
+  Client0 = new_client_skip(),
+  List = [ 2, 3, 5, 8, 13 ],
+  Map = dict:from_list([{ <<"one">>, 1}, {<<"two">>, 2} ]),
+  Expected = #'MissingFields'{
+             first = 111,
+             third = 3.1416,
+             fifth = <<"ef-aye-vee-e">>,
+             seventh = false,
+             ninth = 99
+            },
+  Input = Expected#'MissingFields'{
+             second_skip = 222,
+             fourth_skip = List,
+             sixth_skip = #'AllTypes'{
+                             bool_field = true,
+                             byte_field = 151,
+                             double_field = 1.25,
+                             string_field = <<"zyzyx">>,
+                             int_list = List,
+                             string_int_map = Map},
+             eighth_skip = Map
+           },
+
+  {Client1, Output} = ox_thrift_client:call(Client0, missing, [ Input ]),
+  %% ?assertEqual(Input, Output),
+  ?assertEqual(Expected, Output),
+
+  destroy_client_skip(Client1).
+
 
 -define(F(TestName), fun () -> TestName(TestType, NewClient, DestroyClient) end).
 
@@ -204,6 +246,7 @@ handle_function (Function, Args) ->
   case Function of
     add_one -> [ In ] = Args, {reply, In + 1};
     cast    -> [ Message ] = Args, io:format("~p\n", [ Message ]), ok;
+    missing -> {reply, hd(Args)};
     _       -> Reply = apply(?MODULE, Function, Args),
                {reply, Reply}
   end.

@@ -6,9 +6,10 @@ struct AllTypes {
   5:  optional i64 i64_field
   6:  optional double double_field
   7:  optional string string_field
-  8:  optional list<i32> int_list
-  9:  optional set<string> string_set
-  10: optional map<string,i32> string_int_map
+  // 8:  optional list<i32> int_list
+  // 9:  optional set<string> string_set
+  // 10: optional map<string,i32> string_int_map
+  11: optional byte final_field
 }
 
 struct Integers {
@@ -19,20 +20,8 @@ struct Integers {
 
 struct Container {
   1:  i32 first_field
-  2:  Integers second_struct
+  // 2:  Integers second_struct
   3:  i32 third_field
-}
-
-struct MissingFields {
-  1:  optional i32 first
-  2:  optional i32 second_skip                  // SKIP
-  3:  optional double third
-  4:  optional list<i32> fourth_skip            // SKIP
-  5:  optional string fifth
-  6:  optional AllTypes sixth_skip              // SKIP
-  7:  optional bool seventh
-  8:  optional map<string,i32> eighth_skip      // SKIP
-  9:  optional byte ninth
 }
 
 exception SimpleException {
@@ -51,7 +40,7 @@ enum ThrowType {
   Error = 3
 }
 
-service TestService {
+service TestSkipService {
   i32 add_one(1: i32 input)
 
   i32 sum_ints(1: Container ints, 2: i32 second)
@@ -62,8 +51,6 @@ service TestService {
     throws (1: SimpleException e, 2: UnusedException ue)
 
   oneway void cast(1: string message)
-
-  MissingFields missing(1: MissingFields missing)
 }
 
 // Local Variables:

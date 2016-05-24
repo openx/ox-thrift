@@ -4,9 +4,9 @@
 %% DO NOT EDIT UNLESS YOU ARE SURE THAT YOU KNOW WHAT YOU ARE DOING
 %%
 
--module(test_types).
+-module(skip_types).
 
--include("test_types.hrl").
+-include("skip_types.hrl").
 
 -export([struct_info/1, struct_info_ext/1]).
 
@@ -31,19 +31,15 @@ struct_info('Integers') ->
 
 struct_info('Container') ->
   {struct, [{1, i32},
-          {2, {struct, {'test_types', 'Integers'}}},
+          {2, {struct, {'skip_types', 'Integers'}}},
           {3, i32}]}
 ;
 
 struct_info('MissingFields') ->
   {struct, [{1, i32},
-          {2, i32},
           {3, double},
-          {4, {list, i32}},
           {5, string},
-          {6, {struct, {'test_types', 'AllTypes'}}},
           {7, bool},
-          {8, {map, string, i32}},
           {9, byte}]}
 ;
 
@@ -79,19 +75,15 @@ struct_info_ext('Integers') ->
 
 struct_info_ext('Container') ->
   {struct, [{1, undefined, i32, 'first_field', undefined},
-          {2, undefined, {struct, {'test_types', 'Integers'}}, 'second_struct', #'Integers'{}},
+          {2, undefined, {struct, {'skip_types', 'Integers'}}, 'second_struct', #'Integers'{}},
           {3, undefined, i32, 'third_field', undefined}]}
 ;
 
 struct_info_ext('MissingFields') ->
   {struct, [{1, optional, i32, 'first', undefined},
-          {2, optional, i32, 'second_skip', undefined},
           {3, optional, double, 'third', undefined},
-          {4, optional, {list, i32}, 'fourth_skip', []},
           {5, optional, string, 'fifth', undefined},
-          {6, optional, {struct, {'test_types', 'AllTypes'}}, 'sixth_skip', #'AllTypes'{}},
           {7, optional, bool, 'seventh', undefined},
-          {8, optional, {map, string, i32}, 'eighth_skip', dict:new()},
           {9, optional, byte, 'ninth', undefined}]}
 ;
 

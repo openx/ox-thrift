@@ -4,11 +4,11 @@
 %% DO NOT EDIT UNLESS YOU ARE SURE THAT YOU KNOW WHAT YOU ARE DOING
 %%
 
--module(test_service_thrift).
+-module(skip_service_thrift).
 -behaviour(thrift_service).
 
 
--include("test_service_thrift.hrl").
+-include("skip_service_thrift.hrl").
 
 -export([struct_info/1, function_info/2]).
 
@@ -25,7 +25,7 @@ function_info('add_one', exceptions) ->
 ;
 % sum_ints(This, Ints, Second)
 function_info('sum_ints', params_type) ->
-  {struct, [{1, {struct, {'test_types', 'Container'}}},
+  {struct, [{1, {struct, {'skip_types', 'Container'}}},
           {2, i32}]}
 ;
 function_info('sum_ints', reply_type) ->
@@ -35,10 +35,10 @@ function_info('sum_ints', exceptions) ->
 ;
 % echo(This, All_types)
 function_info('echo', params_type) ->
-  {struct, [{1, {struct, {'test_types', 'AllTypes'}}}]}
+  {struct, [{1, {struct, {'skip_types', 'AllTypes'}}}]}
 ;
 function_info('echo', reply_type) ->
-  {struct, {'test_types', 'AllTypes'}};
+  {struct, {'skip_types', 'AllTypes'}};
 function_info('echo', exceptions) ->
   {struct, []}
 ;
@@ -49,8 +49,8 @@ function_info('throw_exception', params_type) ->
 function_info('throw_exception', reply_type) ->
   i32;
 function_info('throw_exception', exceptions) ->
-  {struct, [{1, {struct, {'test_types', 'SimpleException'}}},
-          {2, {struct, {'test_types', 'UnusedException'}}}]}
+  {struct, [{1, {struct, {'skip_types', 'SimpleException'}}},
+          {2, {struct, {'skip_types', 'UnusedException'}}}]}
 ;
 % cast(This, Message)
 function_info('cast', params_type) ->
@@ -63,10 +63,10 @@ function_info('cast', exceptions) ->
 ;
 % missing(This, Missing)
 function_info('missing', params_type) ->
-  {struct, [{1, {struct, {'test_types', 'MissingFields'}}}]}
+  {struct, [{1, {struct, {'skip_types', 'MissingFields'}}}]}
 ;
 function_info('missing', reply_type) ->
-  {struct, {'test_types', 'MissingFields'}};
+  {struct, {'skip_types', 'MissingFields'}};
 function_info('missing', exceptions) ->
   {struct, []}
 ;

@@ -25,13 +25,9 @@ struct Container {
 
 struct MissingFields {
   1:  optional i32 first
-  2:  optional i32 second_skip                  // SKIP
   3:  optional double third
-  4:  optional list<i32> fourth_skip            // SKIP
   5:  optional string fifth
-  6:  optional AllTypes sixth_skip              // SKIP
   7:  optional bool seventh
-  8:  optional map<string,i32> eighth_skip      // SKIP
   9:  optional byte ninth
 }
 
@@ -51,7 +47,7 @@ enum ThrowType {
   Error = 3
 }
 
-service TestService {
+service SkipService {
   i32 add_one(1: i32 input)
 
   i32 sum_ints(1: Container ints, 2: i32 second)

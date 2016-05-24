@@ -1,10 +1,10 @@
--ifndef(_test_types_included).
--define(_test_types_included, yeah).
+-ifndef(_skip_types_included).
+-define(_skip_types_included, yeah).
 
--define(TEST_THROWTYPE_NORMALRETURN, 0).
--define(TEST_THROWTYPE_DECLAREDEXCEPTION, 1).
--define(TEST_THROWTYPE_UNDECLAREDEXCEPTION, 2).
--define(TEST_THROWTYPE_ERROR, 3).
+-define(SKIP_THROWTYPE_NORMALRETURN, 0).
+-define(SKIP_THROWTYPE_DECLAREDEXCEPTION, 1).
+-define(SKIP_THROWTYPE_UNDECLAREDEXCEPTION, 2).
+-define(SKIP_THROWTYPE_ERROR, 3).
 
 %% struct 'AllTypes'
 
@@ -37,13 +37,9 @@
 %% struct 'MissingFields'
 
 -record('MissingFields', {'first' :: integer(),
-                          'second_skip' :: integer(),
                           'third' :: float(),
-                          'fourth_skip' :: list(),
                           'fifth' :: string() | binary(),
-                          'sixth_skip' :: 'AllTypes'(),
                           'seventh' :: boolean(),
-                          'eighth_skip' :: dict(),
                           'ninth' :: integer()}).
 -type 'MissingFields'() :: #'MissingFields'{}.
 
