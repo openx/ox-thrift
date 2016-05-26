@@ -43,16 +43,16 @@ wire_to_term(?tType_LIST)       -> list.
 %% parses the data from a binary buffer and returns the parsed data and the
 %% remaining buffer.
 
--define(VERSION_MASK, 16#FFFF0000).
--define(VERSION_1, 16#80010000).
--define(TYPE_MASK, 16#000000ff).
+-define(VERSION_0, <<0, 0>>).
+-define(VERSION_1, <<16#80, 16#01>>).
 
 write (#protocol_message_begin{
           name = Name,
           type = Type,
           seqid = Seqid}) ->
   %% Write a version 1 message header.
-  [ write(i32, ?VERSION_1 bor Type), write(string, Name), write(i32, Seqid) ];
+  NameLen = size(Name),
+  <<?VERSION_1/binary, 0, Type, NameLen:32/big-signed, Name/binary, Seqid:32/big-signed>>;
 
 write (message_end) ->
   [];
@@ -150,22 +150,18 @@ read(DataIn, Type) ->
 
 
 ?READ (Data0, message_begin) ->
-  {Data1, Initial} = read(Data0, ui32),
-  case Initial band ?VERSION_MASK of
+  Version = binary_part(Data0, {0, 2}),
+  case Version of
     ?VERSION_1 ->
-      Type = Initial band ?TYPE_MASK,
-      {Data2, Name} = read(Data1, string),
-      {Data3, SeqId} = read(Data2, i32),
-      {Data3, #protocol_message_begin{name = Name, type = Type, seqid = SeqId}};
-    0 ->
+      <<_:3/binary, Type, NameSize:32/big-signed, Name:NameSize/binary, SeqId:32/big-signed, Data1/binary>> = Data0,
+      {Data1, #protocol_message_begin{name = Name, type = Type, seqid = SeqId}};
+    ?VERSION_0 ->
       %% No version header; read the old way.
-      {Data2, Name}  = read_data(Data1, Initial),
-      {Data3, Type}  = read(Data2, byte),
-      {Data4, SeqId} = read(Data3, i32),
-      {Data4, #protocol_message_begin{name = Name, type = Type, seqid = SeqId}};
-    _ ->
+      <<_:2/binary, NameSize:16/big-signed, Name:NameSize/binary, Type, SeqId:32/big-signed, Data1/binary>> = Data0,
+      {Data1, #protocol_message_begin{name = Name, type = Type, seqid = SeqId}};
+    _  ->
       %% Unexpected version number.
-      error({bad_binary_protocol_version, Initial})
+      error({bad_binary_protocol_version, Version})
   end;
 
 ?READ (Data, message_end) ->
@@ -250,13 +246,13 @@ read(DataIn, Type) ->
   {Data1, Val}.
 
 
--spec read_data(DataIn::binary(), Size::non_neg_integer()) -> {DataOut::binary(), Value::binary()}.
-read_data (Data0, Size) ->
-  case Size of
-    0 -> {Data0, <<>>};
-    _ -> <<Val:Size/binary, Data1/binary>> = Data0,
-         {Data1, Val}
-  end.
+%% -spec read_data(DataIn::binary(), Size::non_neg_integer()) -> {DataOut::binary(), Value::binary()}.
+%% read_data (Data0, Size) ->
+%%   case Size of
+%%     0 -> {Data0, <<>>};
+%%     _ -> <<Val:Size/binary, Data1/binary>> = Data0,
+%%          {Data1, Val}
+%%   end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -267,11 +263,15 @@ read_data (Data0, Size) ->
 -ifdef(EUNIT).
 
 message_test () ->
-  P = #protocol_message_begin{name = <<"test">>, type = ?tMessageType_CALL, seqid = 16#7FFFFFF0},
+  SeqId = 16#7FFFFFF0,
+  P = #protocol_message_begin{name = <<"test">>, type = ?tMessageType_CALL, seqid = SeqId},
   ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), message_begin)),
 
+  %% New-style message header.
+  ?assertEqual({<<>>, P}, read(<<?VERSION_1/binary, 0, ?tMessageType_CALL, 4:32/big, "test", SeqId:32/big>>, message_begin)),
+
   %% Old-style message header.
-  ?assertEqual({<<>>, P}, read(<<4:32/big, "test", ?tMessageType_CALL, 16#7FFFFFF0:32/big>>, message_begin)).
+  ?assertEqual({<<>>, P}, read(<<4:32/big, "test", ?tMessageType_CALL, SeqId:32/big>>, message_begin)).
 
 field_test () ->
   P = #protocol_field_begin{type = i32, id = 16#7FF0},
