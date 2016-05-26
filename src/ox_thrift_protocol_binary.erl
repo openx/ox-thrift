@@ -8,7 +8,7 @@
 
 -compile({inline, [ write_message_begin/3
                   , write_message_end/0
-                  , write_field_begin/3
+                  , write_field_begin/2
                   , write_field_stop/0
                   , write_field_end/0
                   , write_map_begin/3
@@ -80,7 +80,7 @@ write_message_begin (Name, Type, SeqId) ->
 write_message_end () ->
   [].
 
-write_field_begin (_Name, Type, Id) ->
+write_field_begin (Type, Id) ->
   TypeWire = term_to_wire(Type),
   <<TypeWire:8/big-signed, Id:16/big-signed>>.
 
@@ -301,11 +301,10 @@ message_test () ->
                read_message_begin(<<NameLen:32/big, Name/binary, Type, SeqId:32/big>>)).
 
 field_test () ->
-  Name = <<"field">>,
   Type = i32,
   Id = 16#7FF0,
   %% Name is not sent in binary protocol.
-  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Name, Type, Id)))),
+  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id)))),
 
   ?assertEqual(<<>>, read_field_end(iolist_to_binary(write_field_end()))).
 

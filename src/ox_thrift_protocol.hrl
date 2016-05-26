@@ -197,7 +197,7 @@ encode_struct ([ {FieldId, Type} | FieldRest ], Record, I) ->
       encode_struct(FieldRest, Record, I+1);
     Data ->
       FieldTypeId = term_to_typeid(Type),
-      [ write_field_begin(<<"name">>, FieldTypeId, FieldId)
+      [ write_field_begin(FieldTypeId, FieldId)
       , encode(Type, Data)
       , write_field_end()
       | encode_struct(FieldRest, Record, I+1)
