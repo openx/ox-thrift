@@ -215,7 +215,7 @@ encode_struct ([], _Record, _I) ->
 %% `MessageType' is `?tMessageType_CALL', `?tMessageType_ONEWAY', `?tMessageReply', or `?tMessageException'.
 decode_message (ServiceModule, Buffer0) ->
   {Buffer1, #protocol_message_begin{name=FunctionBin, type=ThriftMessageType, seqid=SeqId}} =
-    read(Buffer0, message_begin),
+    read_message_begin(Buffer0),
   Function = binary_to_atom(FunctionBin, latin1),
   case ThriftMessageType of
     ?tMessageType_CALL ->
@@ -239,7 +239,7 @@ decode_message (ServiceModule, Buffer0) ->
       MessageSpec = ?tApplicationException_Structure,
       {Buffer2, Args} = decode_record(Buffer1, application_exception, MessageSpec)
   end,
-  {<<>>, ok} = read(Buffer2, message_end),
+  <<>> = read_message_end(Buffer2),
   %% io:format(standard_error, "decode\nspec ~p\nargs ~p\n", [ MessageSpec, Args ]),
   {Function, MessageType, SeqId, Args}.
 
@@ -267,25 +267,25 @@ decode (Buffer, {struct, {Schema, StructName}})
   decode_record(Buffer, StructName, Schema:struct_info(StructName));
 
 decode (Buffer0, _T={list, Type}) ->
-  {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read(Buffer0, list_begin),
+  {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read_list_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_list(Buffer1, Type, [], Size),
-  {Buffer3, ok} = read(Buffer2, list_end),
+  Buffer3 = read_list_end(Buffer2),
   {Buffer3, List};
 
 decode (Buffer0, _T={map, KeyType, ValType}) ->
-  {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read(Buffer0, map_begin),
+  {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read_map_begin(Buffer0),
   ?VALIDATE_TYPE(KeyType, KType, [ Buffer0, _T ]),
   ?VALIDATE_TYPE(ValType, VType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, [], Size),
-  {Buffer3, ok} = read(Buffer2, map_end),
+  Buffer3 = read_map_end(Buffer2),
   {Buffer3, dict:from_list(List)};
 
 decode (Buffer0, _T={set, Type}) ->
-  {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read(Buffer0, set_begin),
+  {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read_set_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_set(Buffer1, Type, [], Size),
-  {Buffer3, ok} = read(Buffer2, set_end),
+  Buffer3 = read_set_end(Buffer2),
   {Buffer3, sets:from_list(List)};
 
 decode (Buffer0, Type) when is_atom(Type) ->
@@ -297,19 +297,19 @@ decode (Buffer0, Type) when is_atom(Type) ->
 decode_record (Buffer0, Name, {struct, StructDef})
   when is_atom(Name), is_list(StructDef) ->
   %% Decode a record from a struct definition.
-  {Buffer1, ok} = read(Buffer0, struct_begin),
+  Buffer1 = read_struct_begin(Buffer0),
   %% If we were going to handle field defaults we could create the initialize
   %% here.  It might be better to wait until after the struct is parsed,
   %% however, to avoid unnecessarily creating initializers for fields that
   %% don't need them. @@
   {Buffer2, Record} = decode_struct(Buffer1, StructDef, [ {1, Name} ]),
-  {Buffer3, ok} = read(Buffer2, struct_end),
+  Buffer3 = read_struct_end(Buffer2),
   {Buffer3, Record}.
 
 
 -spec decode_struct(BufferIn::binary(), FieldList::list(), Acc::list()) -> {binary(), tuple()}.
 decode_struct (Buffer0, FieldList, Acc) ->
-  {Buffer1, #protocol_field_begin{type=FieldTId, id=FieldId}} = read(Buffer0, field_begin),
+  {Buffer1, #protocol_field_begin{type=FieldTId, id=FieldId}} = read_field_begin(Buffer0),
   case FieldTId of
     field_stop ->
       Record = erlang:make_tuple(length(FieldList)+1, undefined, Acc),
@@ -319,12 +319,12 @@ decode_struct (Buffer0, FieldList, Acc) ->
         {FieldTypeAtom, N} ->
           ?VALIDATE_TYPE(FieldTypeAtom, FieldTId, [ Buffer0, FieldList, Acc ]),
           {Buffer2, Val} = decode(Buffer1, FieldTypeAtom),
-          {Buffer3, ok} = read(Buffer2, field_end),
+          Buffer3 = read_field_end(Buffer2),
           decode_struct(Buffer3, FieldList, [ {N, Val} | Acc ]);
         false ->
           %% io:format("field ~p not found in ~p\n", [ FieldId, FieldList ]),
-          {Buffer2, _} = skip(Buffer1, FieldTId),
-          {Buffer3, ok} = read(Buffer2, field_end),
+          Buffer2 = skip(Buffer1, FieldTId),
+          Buffer3 = read_field_end(Buffer2),
           decode_struct(Buffer3, FieldList, Acc)
       end
   end.
@@ -354,51 +354,52 @@ decode_set (Buffer0, EType, Acc, N) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec skip(Buffer0::binary(), Type::atom()) -> {Buffer1::binary(), Dummy::term()}.
+-spec skip(Buffer0::binary(), Type::atom()) -> Buffer1::binary().
 skip (Buffer0, struct) ->
-  {Buffer1, _} = read(Buffer0, struct_begin),
+  Buffer1 = read_struct_begin(Buffer0),
   Buffer2 = skip_struct(Buffer1),
-  read(Buffer2, struct_end);
+  read_struct_end(Buffer2);
 
 skip (Buffer0, list) ->
-  {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read(Buffer0, list_begin),
+  {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read_list_begin(Buffer0),
   Buffer2 = foldn(fun (BufferL0) ->
                       {BufferL1, _} = decode(BufferL0, EType),
                       BufferL1
                   end, Buffer1, Size),
-  read(Buffer2, list_end);
+  read_list_end(Buffer2);
 
 skip (Buffer0, map) ->
-  {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read(Buffer0, map_begin),
+  {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read_map_begin(Buffer0),
   Buffer2 = foldn(fun (BufferL0) ->
                       {BufferL1, _} = decode(BufferL0, KType),
                       {BufferL2, _} = decode(BufferL1, VType),
                       BufferL2
                   end, Buffer1, Size),
-  read(Buffer2, map_end);
+  read_map_end(Buffer2);
 
 skip (Buffer0, set) ->
-  {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read(Buffer0, set_begin),
+  {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read_set_begin(Buffer0),
   Buffer2 = foldn(fun (BufferL0) ->
                       {BufferL1, _} = decode(BufferL0, EType),
                       BufferL1
                   end, Buffer1, Size),
-  read(Buffer2, set_end);
+  read_set_end(Buffer2);
 
 skip (Buffer0, Type) when is_atom(Type) ->
   %% Skip the basic types.
-  read(Buffer0, Type).
+  {Buffer, _Value} = read(Buffer0, Type),
+  Buffer.
 
 
 -spec skip_struct (Buffer0::binary()) -> Buffer1::binary().
 skip_struct (Buffer0) ->
-  {Buffer1, #protocol_field_begin{type=Type}} = read(Buffer0, field_begin),
+  {Buffer1, #protocol_field_begin{type=Type}} = read_field_begin(Buffer0),
   case Type of
     field_stop ->
       Buffer1;
     _ ->
-      {Buffer2, _} = skip(Buffer1, Type),
-      {Buffer3, ok} = read(Buffer2, field_end),
+      Buffer2 = skip(Buffer1, Type),
+      Buffer3 = read_field_end(Buffer2),
       skip_struct(Buffer3)
   end.
 
