@@ -13,10 +13,10 @@
 struct_info('AllTypes') ->
   {struct, [{1, bool},
           {2, byte},
-          {3, i16},
-          {4, i32},
-          {5, i64},
-          {6, double},
+          {6, i16},
+          {5, i32},
+          {4, i64},
+          {3, double},
           {7, string},
           {8, {list, i32}},
           {9, {set, string}},
@@ -37,10 +37,10 @@ struct_info('Container') ->
 
 struct_info('MissingFields') ->
   {struct, [{1, i32},
-          {3, double},
-          {5, string},
-          {7, bool},
-          {9, byte}]}
+          {5, double},
+          {9, string},
+          {12, bool},
+          {15, byte}]}
 ;
 
 struct_info('SimpleException') ->
@@ -57,10 +57,10 @@ struct_info(_) -> erlang:error(function_clause).
 struct_info_ext('AllTypes') ->
   {struct, [{1, optional, bool, 'bool_field', undefined},
           {2, optional, byte, 'byte_field', undefined},
-          {3, optional, i16, 'i16_field', undefined},
-          {4, optional, i32, 'i32_field', undefined},
-          {5, optional, i64, 'i64_field', undefined},
-          {6, optional, double, 'double_field', undefined},
+          {6, optional, i16, 'i16_field', undefined},
+          {5, optional, i32, 'i32_field', undefined},
+          {4, optional, i64, 'i64_field', undefined},
+          {3, optional, double, 'double_field', undefined},
           {7, optional, string, 'string_field', undefined},
           {8, optional, {list, i32}, 'int_list', []},
           {9, optional, {set, string}, 'string_set', sets:new()},
@@ -81,10 +81,10 @@ struct_info_ext('Container') ->
 
 struct_info_ext('MissingFields') ->
   {struct, [{1, optional, i32, 'first', undefined},
-          {3, optional, double, 'third', undefined},
-          {5, optional, string, 'fifth', undefined},
-          {7, optional, bool, 'seventh', undefined},
-          {9, optional, byte, 'ninth', undefined}]}
+          {5, optional, double, 'third', undefined},
+          {9, optional, string, 'fifth', undefined},
+          {12, optional, bool, 'seventh', undefined},
+          {15, optional, byte, 'ninth', undefined}]}
 ;
 
 struct_info_ext('SimpleException') ->
