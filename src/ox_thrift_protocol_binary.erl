@@ -9,7 +9,7 @@
 -compile({inline, [ write/1, write/2, read/2 ]}).
 %% -compile(inline_list_funcs).
 
-term_to_wire(field_stop)        -> ?tType_STOP;
+%% term_to_wire(field_stop)        -> ?tType_STOP;
 term_to_wire(bool)              -> ?tType_BOOL;
 term_to_wire(byte)              -> ?tType_BYTE;
 term_to_wire(double)            -> ?tType_DOUBLE;
@@ -22,7 +22,7 @@ term_to_wire(map)               -> ?tType_MAP;
 term_to_wire(set)               -> ?tType_SET;
 term_to_wire(list)              -> ?tType_LIST.
 
-wire_to_term(?tType_STOP)       -> field_stop;
+%% wire_to_term(?tType_STOP)       -> field_stop;
 wire_to_term(?tType_BOOL)       -> bool;
 wire_to_term(?tType_BYTE)       -> byte;
 wire_to_term(?tType_DOUBLE)     -> double;
