@@ -9,7 +9,7 @@ incarnation, it uses the structure definitions produced by the Apache
 Thrift code generator.  However it has the following differences from
 the Apache Thrift Erlang library.
 
-* It supports only framed transport.
+* It supports only framed transports and binary protocol.
 
 * It gives up the ability to stream to or from the transport.
   Instead, the processor layer decodes the thrift message from a
@@ -24,6 +24,12 @@ the Apache Thrift Erlang library.
 * The `HandlerModule:handle_function(Function, Args)` interface
   expects the HandlerModule to take its arguments as a list instead of
   a tuple.
+
+* Like the Apache Thrift Erlang library, OX Thrift does not enforce
+  required struct fields, on either encoding or decoding.
+
+* Like the Apache library, OX Thrift does not populate the structs
+  with default values on decoding.
 
 ## Interface
 

@@ -2,7 +2,7 @@
 # variable FW_PACKAGE_DEFAULT_MAINTAINER if non-empty at init time
 
 FW_PACKAGE_NAME="${BUILD_PREFIX}ox-thrift"
-FW_PACKAGE_VERSION="0.1.0"
+FW_PACKAGE_VERSION="0.2.0"
 FW_PACKAGE_MAINTAINER="david.hull <david.hull@openx.com>"
 FW_PACKAGE_ORGANIZATION=${FW_PACKAGE_ORGANIZATION-"unknown"}
 FW_PACKAGE_PACKAGER=${FW_PACKAGE_PACKAGER-"david.hull <david.hull@openx.com>"}
