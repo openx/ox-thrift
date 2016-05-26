@@ -162,38 +162,45 @@ read(DataIn, Type) ->
 -endif. %% ! DEBUG_READ
 
 
+-spec read_message_begin(IData::binary()) -> {OData::binary(), Name::binary(), Type::integer(), SeqId::integer()}.
 read_message_begin (Data0) ->
   Version = binary_part(Data0, {0, 2}),
   case Version of
     ?VERSION_1 ->
       <<_:3/binary, Type, NameSize:32/big-signed, Name:NameSize/binary, SeqId:32/big-signed, Data1/binary>> = Data0,
-      {Data1, #protocol_message_begin{name = Name, type = Type, seqid = SeqId}};
+      {Data1, Name, Type, SeqId};
     ?VERSION_0 ->
       %% No version header; read the old way.
       <<_:2/binary, NameSize:16/big-signed, Name:NameSize/binary, Type, SeqId:32/big-signed, Data1/binary>> = Data0,
-      {Data1, #protocol_message_begin{name = Name, type = Type, seqid = SeqId}};
+      {Data1, Name, Type, SeqId};
     _  ->
       %% Unexpected version number.
       error({bad_binary_protocol_version, Version})
   end.
 
+-spec read_message_end (IData::binary()) -> OData::binary().
 read_message_end (Data) ->
   Data.
 
+-spec read_struct_begin (IData::binary()) -> OData::binary().
 read_struct_begin (Data) ->
   Data.
 
+-spec read_struct_end (IData::binary()) -> OData::binary().
 read_struct_end (Data) ->
   Data.
 
+-spec read_field_begin (IData::binary()) -> {OData::binary(), Type::proto_type(), Id::integer()}
+                                          | {OData::binary(), field_stop, 'undefined'}.
 read_field_begin (Data0) ->
   case Data0 of
     <<?tType_STOP:8/big-signed, Data1/binary>>  ->
-      {Data1, #protocol_field_begin{type = field_stop}};
+      {Data1, field_stop, undefined};
     <<Type:8/big-signed, Id:16/big-signed, Data1/binary>> ->
-      {Data1, #protocol_field_begin{type = wire_to_term(Type), id = Id}}
+      {Data1, wire_to_term(Type), Id}
   end.
 
+-spec read_field_end (IData::binary()) -> OData::binary().
 read_field_end (Data) ->
   Data.
 
@@ -204,24 +211,30 @@ read_field_end (Data) ->
 %%   {?tType_STOP, Data1} = read(?tType_BYTE, Data0),
 %%   {ok, Data1};
 
+-spec read_map_begin(IData::binary()) -> {OData::binary(), KType::proto_type(), VType::proto_type(), Size::integer()}.
 read_map_begin (Data0) ->
   <<KType:8/big-signed, VType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {Data1, #protocol_map_begin{ktype = wire_to_term(KType), vtype = wire_to_term(VType), size = Size}}.
+  {Data1, wire_to_term(KType), wire_to_term(VType), Size}.
 
+-spec read_map_end (IData::binary()) -> OData::binary().
 read_map_end (Data) ->
   Data.
 
+-spec read_list_begin(IData::binary()) -> {OData::binary(), EType::proto_type(), Size::integer()}.
 read_list_begin (Data0) ->
   <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {Data1, #protocol_list_begin{etype = wire_to_term(EType), size = Size}}.
+  {Data1, wire_to_term(EType), Size}.
 
+-spec read_list_end (IData::binary()) -> OData::binary().
 read_list_end (Data) ->
   Data.
 
+-spec read_set_begin(IData::binary()) -> {OData::binary(), EType::proto_type(), Size::integer()}.
 read_set_begin (Data0) ->
   <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {Data1, #protocol_set_begin{etype = wire_to_term(EType), size = Size}}.
+  {Data1, wire_to_term(EType), Size}.
 
+-spec read_set_end (IData::binary()) -> OData::binary().
 read_set_end (Data) ->
   Data.
 
@@ -276,22 +289,23 @@ message_test () ->
   NameLen = size(Name),
   Type = ?tMessageType_CALL,
   SeqId = 16#7FFFFFF0,
-  P = #protocol_message_begin{name = Name, type = Type, seqid = SeqId},
-  ?assertEqual({<<>>, P}, read_message_begin(iolist_to_binary(write_message_begin(Name, Type, SeqId)))),
+  ?assertEqual({<<>>, Name, Type, SeqId},
+               read_message_begin(iolist_to_binary(write_message_begin(Name, Type, SeqId)))),
 
   %% New-style message header.
-  ?assertEqual({<<>>, P}, read_message_begin(<<?VERSION_1/binary, 0, Type, NameLen:32/big, Name/binary, SeqId:32/big>>)),
+  ?assertEqual({<<>>, Name, Type, SeqId},
+               read_message_begin(<<?VERSION_1/binary, 0, Type, NameLen:32/big, Name/binary, SeqId:32/big>>)),
 
   %% Old-style message header.
-  ?assertEqual({<<>>, P}, read_message_begin(<<NameLen:32/big, Name/binary, Type, SeqId:32/big>>)).
+  ?assertEqual({<<>>, Name, Type, SeqId},
+               read_message_begin(<<NameLen:32/big, Name/binary, Type, SeqId:32/big>>)).
 
 field_test () ->
   Name = <<"field">>,
   Type = i32,
   Id = 16#7FF0,
   %% Name is not sent in binary protocol.
-  P = #protocol_field_begin{name = undefined, type = Type, id = Id},
-  ?assertEqual({<<>>, P}, read_field_begin(iolist_to_binary(write_field_begin(Name, Type, Id)))),
+  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Name, Type, Id)))),
 
   ?assertEqual(<<>>, read_field_end(iolist_to_binary(write_field_end()))).
 
@@ -299,24 +313,21 @@ map_test () ->
   KType = byte,
   VType = string,
   Size = 16#7FFFFFF1,
-  P = #protocol_map_begin{ktype = KType, vtype = VType, size = Size},
-  ?assertEqual({<<>>, P}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size)))),
+  ?assertEqual({<<>>, KType, VType, Size}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size)))),
 
   ?assertEqual(<<>>, read_map_end(iolist_to_binary(write_map_end()))).
 
 list_test () ->
   EType = byte,
   Size = 16#7FFFFFF2,
-  P = #protocol_list_begin{etype = EType, size = Size},
-  ?assertEqual({<<>>, P}, read_list_begin(iolist_to_binary(write_list_begin(EType, Size)))),
+  ?assertEqual({<<>>, EType, Size}, read_list_begin(iolist_to_binary(write_list_begin(EType, Size)))),
 
   ?assertEqual(<<>>, read_list_end(iolist_to_binary(write_list_end()))).
 
 set_test () ->
   EType = byte,
   Size = 16#7FFFFFF3,
-  P = #protocol_set_begin{etype = EType, size = Size},
-  ?assertEqual({<<>>, P}, read_set_begin(iolist_to_binary(write_set_begin(EType, Size)))),
+  ?assertEqual({<<>>, EType, Size}, read_set_begin(iolist_to_binary(write_set_begin(EType, Size)))),
 
   ?assertEqual(<<>>, read_set_end(iolist_to_binary(write_set_end()))).
 

@@ -214,7 +214,7 @@ encode_struct ([], _Record, _I) ->
                         {Function::atom(), MessageType::message_type(), Seqid::integer(), Args::term()}.
 %% `MessageType' is `?tMessageType_CALL', `?tMessageType_ONEWAY', `?tMessageReply', or `?tMessageException'.
 decode_message (ServiceModule, Buffer0) ->
-  {Buffer1, #protocol_message_begin{name=FunctionBin, type=ThriftMessageType, seqid=SeqId}} =
+  {Buffer1, FunctionBin, ThriftMessageType, SeqId} =
     read_message_begin(Buffer0),
   Function = binary_to_atom(FunctionBin, latin1),
   case ThriftMessageType of
@@ -267,14 +267,14 @@ decode (Buffer, {struct, {Schema, StructName}})
   decode_record(Buffer, StructName, Schema:struct_info(StructName));
 
 decode (Buffer0, _T={list, Type}) ->
-  {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read_list_begin(Buffer0),
+  {Buffer1, EType, Size} = read_list_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_list(Buffer1, Type, [], Size),
   Buffer3 = read_list_end(Buffer2),
   {Buffer3, List};
 
 decode (Buffer0, _T={map, KeyType, ValType}) ->
-  {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read_map_begin(Buffer0),
+  {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
   ?VALIDATE_TYPE(KeyType, KType, [ Buffer0, _T ]),
   ?VALIDATE_TYPE(ValType, VType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, [], Size),
@@ -282,7 +282,7 @@ decode (Buffer0, _T={map, KeyType, ValType}) ->
   {Buffer3, dict:from_list(List)};
 
 decode (Buffer0, _T={set, Type}) ->
-  {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read_set_begin(Buffer0),
+  {Buffer1, EType, Size} = read_set_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_set(Buffer1, Type, [], Size),
   Buffer3 = read_set_end(Buffer2),
@@ -309,21 +309,21 @@ decode_record (Buffer0, Name, {struct, StructDef})
 
 -spec decode_struct(BufferIn::binary(), FieldList::list(), Acc::list()) -> {binary(), tuple()}.
 decode_struct (Buffer0, FieldList, Acc) ->
-  {Buffer1, #protocol_field_begin{type=FieldTId, id=FieldId}} = read_field_begin(Buffer0),
-  case FieldTId of
+  {Buffer1, FieldType, FieldId} = read_field_begin(Buffer0),
+  case FieldType of
     field_stop ->
       Record = erlang:make_tuple(length(FieldList)+1, undefined, Acc),
       {Buffer1, Record};
     _ ->
       case keyfind(FieldList, FieldId, 2) of %% inefficient @@
         {FieldTypeAtom, N} ->
-          ?VALIDATE_TYPE(FieldTypeAtom, FieldTId, [ Buffer0, FieldList, Acc ]),
+          ?VALIDATE_TYPE(FieldTypeAtom, FieldType, [ Buffer0, FieldList, Acc ]),
           {Buffer2, Val} = decode(Buffer1, FieldTypeAtom),
           Buffer3 = read_field_end(Buffer2),
           decode_struct(Buffer3, FieldList, [ {N, Val} | Acc ]);
         false ->
           %% io:format("field ~p not found in ~p\n", [ FieldId, FieldList ]),
-          Buffer2 = skip(Buffer1, FieldTId),
+          Buffer2 = skip(Buffer1, FieldType),
           Buffer3 = read_field_end(Buffer2),
           decode_struct(Buffer3, FieldList, Acc)
       end
@@ -361,7 +361,7 @@ skip (Buffer0, struct) ->
   read_struct_end(Buffer2);
 
 skip (Buffer0, list) ->
-  {Buffer1, #protocol_list_begin{etype=EType, size=Size}} = read_list_begin(Buffer0),
+  {Buffer1, EType, Size} = read_list_begin(Buffer0),
   Buffer2 = foldn(fun (BufferL0) ->
                       {BufferL1, _} = decode(BufferL0, EType),
                       BufferL1
@@ -369,7 +369,7 @@ skip (Buffer0, list) ->
   read_list_end(Buffer2);
 
 skip (Buffer0, map) ->
-  {Buffer1, #protocol_map_begin{ktype=KType, vtype=VType, size=Size}} = read_map_begin(Buffer0),
+  {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
   Buffer2 = foldn(fun (BufferL0) ->
                       {BufferL1, _} = decode(BufferL0, KType),
                       {BufferL2, _} = decode(BufferL1, VType),
@@ -378,7 +378,7 @@ skip (Buffer0, map) ->
   read_map_end(Buffer2);
 
 skip (Buffer0, set) ->
-  {Buffer1, #protocol_set_begin{etype=EType, size=Size}} = read_set_begin(Buffer0),
+  {Buffer1, EType, Size} = read_set_begin(Buffer0),
   Buffer2 = foldn(fun (BufferL0) ->
                       {BufferL1, _} = decode(BufferL0, EType),
                       BufferL1
@@ -393,7 +393,7 @@ skip (Buffer0, Type) when is_atom(Type) ->
 
 -spec skip_struct (Buffer0::binary()) -> Buffer1::binary().
 skip_struct (Buffer0) ->
-  {Buffer1, #protocol_field_begin{type=Type}} = read_field_begin(Buffer0),
+  {Buffer1, Type, _} = read_field_begin(Buffer0),
   case Type of
     field_stop ->
       Buffer1;
