@@ -6,7 +6,21 @@
 
 -include("ox_thrift_protocol.hrl").
 
--compile({inline, [ write/1, write/2, read/2 ]}).
+-compile({inline, [ write_message_begin/3
+                  , write_message_end/0
+                  , write_field_begin/3
+                  , write_field_stop/0
+                  , write_field_end/0
+                  , write_map_begin/3
+                  , write_map_end/0
+                  , write_list_begin/2
+                  , write_list_end/0
+                  , write_set_begin/2
+                  , write_set_end/0
+                  , write_struct_begin/1
+                  , write_struct_end/0
+                  , write/2
+                  , read/2 ]}).
 %% -compile(inline_list_funcs).
 
 %% term_to_wire(field_stop)        -> ?tType_STOP;
@@ -46,63 +60,50 @@ wire_to_term(?tType_LIST)       -> list.
 -define(VERSION_0, <<0, 0>>).
 -define(VERSION_1, <<16#80, 16#01>>).
 
-write (#protocol_message_begin{
-          name = Name,
-          type = Type,
-          seqid = Seqid}) ->
+write_message_begin (Name, Type, SeqId) ->
   %% Write a version 1 message header.
   NameLen = size(Name),
-  <<?VERSION_1/binary, 0, Type, NameLen:32/big-signed, Name/binary, Seqid:32/big-signed>>;
+  <<?VERSION_1/binary, 0, Type, NameLen:32/big-signed, Name/binary, SeqId:32/big-signed>>.
 
-write (message_end) ->
-  [];
+write_message_end () ->
+  [].
 
-write (#protocol_field_begin{
-          name = _Name,
-          type = Type,
-          id = Id}) ->
+write_field_begin (_Name, Type, Id) ->
   TypeWire = term_to_wire(Type),
-  <<TypeWire:8/big-signed, Id:16/big-signed>>;
+  <<TypeWire:8/big-signed, Id:16/big-signed>>.
 
-write (field_stop) ->
-  <<?tType_STOP:8/big-signed>>;
+write_field_stop () ->
+  <<?tType_STOP:8/big-signed>>.
 
-write (field_end) ->
-  [];
+write_field_end () ->
+  [].
 
-write (#protocol_map_begin{
-          ktype = KType,
-          vtype = VType,
-          size = Size}) ->
+write_map_begin (KType, VType, Size) ->
   KTypeWire = term_to_wire(KType),
   VTypeWire = term_to_wire(VType),
-  <<KTypeWire:8/big-signed, VTypeWire:8/big-signed, Size:32/big-signed>>;
+  <<KTypeWire:8/big-signed, VTypeWire:8/big-signed, Size:32/big-signed>>.
 
-write (map_end) ->
-  [];
+write_map_end () ->
+  [].
 
-write (#protocol_list_begin{
-          etype = EType,
-          size = Size}) ->
+write_list_begin (EType, Size) ->
   ETypeWire = term_to_wire(EType),
-  <<ETypeWire:8/big-signed, Size:32/big-signed>>;
+  <<ETypeWire:8/big-signed, Size:32/big-signed>>.
 
-write (list_end) ->
-  [];
+write_list_end () ->
+  [].
 
-write (#protocol_set_begin{
-          etype = EType,
-          size = Size}) ->
+write_set_begin (EType, Size) ->
   ETypeWire = term_to_wire(EType),
-  <<ETypeWire:8/big-signed, Size:32/big-signed>>;
+  <<ETypeWire:8/big-signed, Size:32/big-signed>>.
 
-write (set_end) ->
-  [];
+write_set_end () ->
+  [].
 
-write (#protocol_struct_begin{}) ->
-  [];
+write_struct_begin (_Name) ->
+  [].
 
-write (struct_end) ->
+write_struct_end () ->
   [].
 
 
@@ -263,39 +264,53 @@ read(DataIn, Type) ->
 -ifdef(EUNIT).
 
 message_test () ->
+  Name = <<"test">>,
+  NameLen = size(Name),
+  Type = ?tMessageType_CALL,
   SeqId = 16#7FFFFFF0,
-  P = #protocol_message_begin{name = <<"test">>, type = ?tMessageType_CALL, seqid = SeqId},
-  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), message_begin)),
+  P = #protocol_message_begin{name = Name, type = Type, seqid = SeqId},
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write_message_begin(Name, Type, SeqId)), message_begin)),
 
   %% New-style message header.
-  ?assertEqual({<<>>, P}, read(<<?VERSION_1/binary, 0, ?tMessageType_CALL, 4:32/big, "test", SeqId:32/big>>, message_begin)),
+  ?assertEqual({<<>>, P}, read(<<?VERSION_1/binary, 0, Type, NameLen:32/big, Name/binary, SeqId:32/big>>, message_begin)),
 
   %% Old-style message header.
-  ?assertEqual({<<>>, P}, read(<<4:32/big, "test", ?tMessageType_CALL, SeqId:32/big>>, message_begin)).
+  ?assertEqual({<<>>, P}, read(<<NameLen:32/big, Name/binary, Type, SeqId:32/big>>, message_begin)).
 
 field_test () ->
-  P = #protocol_field_begin{type = i32, id = 16#7FF0},
-  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), field_begin)),
+  Name = <<"field">>,
+  Type = i32,
+  Id = 16#7FF0,
+  %% Name is not sent in binary protocol.
+  P = #protocol_field_begin{name = undefined, type = Type, id = Id},
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write_field_begin(Name, Type, Id)), field_begin)),
 
-  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write(field_end)), field_end)).
+  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write_field_end()), field_end)).
 
 map_test () ->
-  P = #protocol_map_begin{ktype = byte, vtype = string, size = 16#7FFFFFF1},
-  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), map_begin)),
+  KType = byte,
+  VType = string,
+  Size = 16#7FFFFFF1,
+  P = #protocol_map_begin{ktype = KType, vtype = VType, size = Size},
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write_map_begin(KType, VType, Size)), map_begin)),
 
-  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write(map_end)), map_end)).
+  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write_map_end()), map_end)).
 
 list_test () ->
-  P = #protocol_list_begin{etype = byte, size = 16#7FFFFFF2},
-  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), list_begin)),
+  EType = byte,
+  Size = 16#7FFFFFF2,
+  P = #protocol_list_begin{etype = EType, size = Size},
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write_list_begin(EType, Size)), list_begin)),
 
-  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write(list_end)), list_end)).
+  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write_list_end()), list_end)).
 
 set_test () ->
-  P = #protocol_set_begin{etype = byte, size = 16#7FFFFFF3},
-  ?assertEqual({<<>>, P}, read(iolist_to_binary(write(P)), set_begin)),
+  EType = byte,
+  Size = 16#7FFFFFF3,
+  P = #protocol_set_begin{etype = EType, size = Size},
+  ?assertEqual({<<>>, P}, read(iolist_to_binary(write_set_begin(EType, Size)), set_begin)),
 
-  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write(set_end)), set_end)).
+  ?assertEqual({<<>>, ok}, read(iolist_to_binary(write_set_end()), set_end)).
 
 basic_test () ->
   B = 16#7F,

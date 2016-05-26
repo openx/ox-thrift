@@ -124,20 +124,20 @@ encode_message (ServiceModule, Function, MessageType, SeqId, Args) ->
               end
             end),
 
-  [ write(#protocol_message_begin{name = atom_to_binary(Function, latin1), type = ThriftMessageType, seqid = SeqId})
+  [ write_message_begin(atom_to_binary(Function, latin1), ThriftMessageType, SeqId)
     %% Thrift supports only lists of uniform types, and so it uses a
     %% function-specific struct for a function's argument list.
   , encode(MessageSpec, ArgsList)
-  , write(message_end)
+  , write_message_end()
   ].
 
 
 encode ({struct, StructDef}, Data)
   when is_list(StructDef), is_tuple(Data), length(StructDef) == size(Data) - 1 ->
   %% Encode a record from a struct definition.
-  [ write(#protocol_struct_begin{name = element(1, Data)})
+  [ write_struct_begin(element(1, Data))
   , encode_struct(StructDef, Data, 2)
-  , write(struct_end)
+  , write_struct_end()
   ];
 
 encode ({struct, {Schema, StructName}}, Data)
@@ -152,38 +152,31 @@ encode ({list, Type}, Data)
   when is_list(Data) ->
   %% Encode a list.
   EltTId = term_to_typeid(Type),
-  [ write(#protocol_list_begin{
-                   etype = EltTId,
-                   size = length(Data)})
+  [ write_list_begin(EltTId, length(Data))
   , lists:map(fun (Elt) -> encode(Type, Elt) end, Data)
-  , write(list_end)
+  , write_list_end()
   ];
 
 encode ({map, KeyType, ValType}, Data) ->
   %% Encode a map.
   KeyTId = term_to_typeid(KeyType),
   ValTId = term_to_typeid(ValType),
-  [ write(#protocol_map_begin{
-                   ktype = KeyTId,
-                   vtype = ValTId,
-                   size = dict:size(Data)})
+  [ write_map_begin(KeyTId, ValTId, dict:size(Data))
   , dict:fold(fun (Key, Val, Acc) ->
                   [ encode(KeyType, Key)
                   , encode(ValType, Val)
                   | Acc
                   ]
               end, [], Data)
-  , write(map_end)
+  , write_map_end()
   ];
 
 encode ({set, Type}, Data) ->
   %% Encode a set.
   EltType = term_to_typeid(Type),
-  [ write(#protocol_set_begin{
-                   etype = EltType,
-                   size = sets:size(Data)})
+  [ write_set_begin(EltType, sets:size(Data))
   , sets:fold(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
-  , write(set_end)
+  , write_set_end()
   ];
 
 encode (Type, Data) when is_atom(Type) ->
@@ -204,17 +197,15 @@ encode_struct ([ {FieldId, Type} | FieldRest ], Record, I) ->
       encode_struct(FieldRest, Record, I+1);
     Data ->
       FieldTypeId = term_to_typeid(Type),
-      [ write(#protocol_field_begin{
-                       type = FieldTypeId,
-                       id = FieldId})
+      [ write_field_begin(<<"name">>, FieldTypeId, FieldId)
       , encode(Type, Data)
-      , write(field_end)
+      , write_field_end()
       | encode_struct(FieldRest, Record, I+1)
       ]
   end;
 
 encode_struct ([], _Record, _I) ->
-  write(field_stop).
+  [ write_field_stop() ].
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
