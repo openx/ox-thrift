@@ -163,27 +163,20 @@ These numbers were taken from benchmarks of a production SSRTB system.
 
 |        |Apache Thrift|OX Thrift|Speedup|
 |--------|-------------|---------|-------|
-|Encoding|       736 us|   171 us|  4.3 x|
-|Decoding|      1051 us|   250 us|  4.2 x|
+|Decoding|      1098 us|   244 us|  4.5 x|
+|Encoding|       868 us|   185 us|  4.7 x|
 
 <!--
 ```
-[{decode,159370,167525741,1051},
- {encode,132855,97760667,736}]
+[{decode,13569,14898510,1098},
+ {encode,10764,9338300,868}]
 ```
 
 New Code
 ```
-(erlang@xfga-e27.xf.dc.openx.org)9> ox_thrift_stats:read().
-[{decode,481342,127065950,264},
- {encode,379650,83756142,221}]
-```
-
-With Inline
-
-```
-[{decode,119448,29868742,250},
- {encode,101370,17324422,171}]
+(erlang@xfga-e27.xf.dc.openx.org)8> ssrtb_thrift_service:print_stats().
+decode    8135310 us /    33373 =  244 us
+encode    4902716 us /    26462 =  185 us
 ```
 -->
 
@@ -199,9 +192,9 @@ See the [message protocol documentation](MessageProtocol.md).
   Unfortunately, the code is not public.  The author claims the
   following speedups:
 
-  |Optimization   |Encoding|Decoding|
+  |Optimization   |Decoding|Encoding|
   |---------------|--------|--------|
-  |Layer Squashing|8x      |2x      |
+  |Layer Squashing|2x      |8x      |
   |Generated Funs |16x     |16x     |
 
 * Erlang documentation on
