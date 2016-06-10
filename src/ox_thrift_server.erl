@@ -25,8 +25,6 @@
 -callback handle_error(Function::atom(), Reason::term()) -> Ignored::term().
 
 
--define(RECV_TIMEOUT, infinity).
-
 start_link (Ref, Socket, Transport, Opts) ->
   Pid = spawn_link(?MODULE, init, [ Ref, Socket, Transport, Opts ]),
   {ok, Pid}.
@@ -50,18 +48,21 @@ parse_config (#ox_thrift_config{service_module=ServiceModule, codec_module=Codec
   parse_options(Options, Config0).
 
 
+parse_options ([ {recv_timeout, RecvTimeout} | Options ], Config)
+  when (is_integer(RecvTimeout) andalso RecvTimeout >= 0) orelse (RecvTimeout =:= infinity) ->
+  parse_options(Options, Config#ts_config{recv_timeout = RecvTimeout});
 parse_options ([ {stats_module, StatsModule} | Options ], Config) when is_atom(StatsModule) ->
   parse_options(Options, Config#ts_config{stats_module = StatsModule});
 parse_options ([], Config) ->
   Config.
 
 
-loop (State=#ts_state{socket=Socket, transport=Transport}) ->
+loop (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{recv_timeout=RecvTimeout}}) ->
   %% Implement thrift_framed_transport.
 
   %% Read the length, and then the request data.
   %% Result0 will be `{ok, Packet}' or `{error, Reason}'.
-  case Transport:recv(Socket, 4, ?RECV_TIMEOUT) of
+  case Transport:recv(Socket, 4, RecvTimeout) of
     {ok, LengthBin} ->
       <<Length:32/integer-signed-big>> = LengthBin,
       loop1(State#ts_state{call_count = State#ts_state.call_count + 1}, Length);
@@ -70,8 +71,8 @@ loop (State=#ts_state{socket=Socket, transport=Transport}) ->
       %% Return from loop on error.
   end.
 
-loop1 (State=#ts_state{socket=Socket, transport=Transport}, Length) ->
-  RecvResult = Transport:recv(Socket, Length, ?RECV_TIMEOUT),
+loop1 (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{recv_timeout=RecvTimeout}}, Length) ->
+  RecvResult = Transport:recv(Socket, Length, RecvTimeout),
   ?LOG("server recv(~p, ~p) -> ~p\n", [ Socket, Length, RecvResult ]),
   case RecvResult of
     {ok, RequestData} ->

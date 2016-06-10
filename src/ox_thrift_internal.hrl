@@ -6,6 +6,7 @@
           service_module :: atom(),
           codec_module :: atom(),
           handler_module :: atom(),
+          recv_timeout = 'infinity' :: non_neg_integer() | 'infinity',
           stats_module :: atom() }).
 
 

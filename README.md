@@ -140,6 +140,17 @@ exception and return a message to the client, where the exception will
 be re-thrown.
 
 
+#### Setting the Server's `recv` Timeout
+
+The default `recv` timeout is `infinity`, which means that the server
+will keep a socket open indefinitely waiting for a client to send a
+request. You can override this with the `recv_timeout` option.
+
+``` erlang
+#ox_thrift_config{options = [ { recv_timeout, TimeoutMilliseconds } ]}
+
+```
+
 #### Stats Collection
 
 The OX Thrift server will optionally call a `handle_stat` function in

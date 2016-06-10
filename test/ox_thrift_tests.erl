@@ -39,6 +39,7 @@ new_client_socket () ->
 
 destroy_client_socket (Client) ->
   ox_thrift_client:close(Client),
+  timer:sleep(1), % Give handle_error a better chance to be called.
   socket_transport:stop_server(),
   destroy_stats_table(),
   ok.
@@ -69,6 +70,9 @@ create_stats_table () ->
 destroy_stats_table () ->
   ok.
 
+%% print_stats_table () ->
+%%   io:format(standard_error, "~p\n", [ ets:tab2list(?STATS_TABLE) ]).
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -77,6 +81,21 @@ direct_test_ () ->
 
 socket_test_ () ->
   make_tests(socket, fun new_client_socket/0, fun destroy_client_socket/1).
+
+timeout_test () ->
+  Client0 = new_client_socket(),
+  ?assertEqual([], ets:lookup(?STATS_TABLE, {undefined, timeout})),
+  application:set_env(ox_thrift, exceptions_include_traces, true),
+  {Client1, Res1} = ox_thrift_client:call(Client0, add_one, [ 1 ]),
+  ?assertEqual(2, Res1),
+  ?assertEqual([], ets:lookup(?STATS_TABLE, {undefined, timeout})),
+  timer:sleep(200), %% Server recv should time out.
+  ?assertEqual([ {{undefined, timeout}, 1} ], ets:lookup(?STATS_TABLE, {undefined, timeout})),
+  {Client2, Res2} = ox_thrift_client:call(Client1, add_one, [ 2 ]),
+  ?assertEqual(3, Res2),
+  ?assertEqual([ {{undefined, timeout}, 1} ], ets:lookup(?STATS_TABLE, {undefined, timeout})),
+  destroy_client_socket(Client2).
+
 
 skip_test () ->
   Client0 = new_client_skip(),
@@ -251,8 +270,9 @@ handle_function (Function, Args) ->
                {reply, Reply}
   end.
 
-handle_error (_Function, _Reason) ->
-  %% io:format(standard_error, "handle_error ~p ~p\n", [ _Function, _Reason ]),
+handle_error (Function, Reason) ->
+  %% io:format(standard_error, "handle_error ~p ~p\n", [ Function, Reason ]),
+  incr_stat({Function, Reason}, [ {2, 1} ]),
   ok.
 
 handle_stat (Function, Type, Value) ->
@@ -264,6 +284,10 @@ handle_stat (Function, Type, Value) ->
       decode_time  -> {{Function, Type}, [ {2, 1}, {3, Value} ]};
       encode_time  -> {{Function, Type}, [ {2, 1}, {3, Value} ]}
     end,
+  incr_stat(Key, Increment),
+  ok.
+
+incr_stat (Key, Increment) ->
   try ets:update_counter(?STATS_TABLE, Key, Increment)
   catch error:badarg ->
       IncrementList = if is_list(Increment)    -> Increment;
@@ -271,8 +295,8 @@ handle_stat (Function, Type, Value) ->
                          is_integer(Increment) -> [ {2, Increment} ]
                       end,
       ets:insert_new(?STATS_TABLE, erlang:make_tuple(length(IncrementList) + 1, 0, [ {1, Key} | IncrementList ]))
-  end,
-  ok.
+  end.
+
 
 sum_ints (#'Container'{first_field=FirstInt, second_struct=SecondStruct, third_field=ThirdInt}, SecondArg) ->
   SecondSum =
