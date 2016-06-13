@@ -23,7 +23,7 @@ close (Socket) ->
 
 make_get_socket (Port) ->
   fun () ->
-      case gen_tcp:connect(?LOCALHOST, Port, [ binary, {active, false}, {packet, raw} ]) of
+      case gen_tcp:connect(?LOCALHOST, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ]) of
         {ok, Socket} -> Socket;
         {error, Reason} -> error({connect, ?LOCALHOST, Port, Reason})
       end

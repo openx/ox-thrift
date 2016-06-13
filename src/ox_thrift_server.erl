@@ -33,6 +33,7 @@ start_link (Ref, Socket, Transport, Opts) ->
 init (Ref, Socket, Transport, Config) ->
   ?LOG("ox_thrift_server:init ~p ~p ~p ~p\n", [ Ref, Socket, Transport, Config ]),
   ok = ranch:accept_ack(Ref),
+  Transport:setopts(Socket, [ {nodelay, true} ]),
 
   TSConfig = parse_config(Config),
 
