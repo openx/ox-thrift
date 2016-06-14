@@ -42,6 +42,7 @@ module.  This module exports two functions, `new`, and `call`.
 
 ``` erlang
 {ok, Client} = ox_thrift_client:new(SocketFun, Transport, Protocol, Service)
+{ok, Client} = ox_thrift_client:new(SocketFun, Transport, Protocol, Service, Options)
 ```
 
 * SocketFun: A zero-arity function that returns a new passive-mode
@@ -56,6 +57,9 @@ module.  This module exports two functions, `new`, and `call`.
   `ox_thrift_protocol_binary`.
 * Service: A module, produced by the Thrift IDL compiler from the
   service's Thrift definition, that provides the Service layer.
+* Options: A list of options.
+  * `{recv_timeout, Milliseconds}` or `{recv_timeout, infinity}`
+  The receive timeout.
 
 The following shows an example SocketFun for use with the `gen_tcp` Transport.
 
@@ -69,11 +73,12 @@ make_get_socket (Host, Port) ->
   end.
 ```
 
-The OX Thrift library expects to be able to call
+The OX Thrift library expects the Transport module to support the
+following functions on this Socket.
+
 * `ok = Transport:send(Socket, IOData)`,
-* `{ok, Binary} = Transport:recv(Socket, Length)`, and
+* `{ok, Binary} = Transport:recv(Socket, Length, Timeout)`, and
 * `ok = Transport:close(Socket)`
-on this Socket.
 
 #### `call` -- Make a Call to a Thrift Server
 
@@ -168,6 +173,7 @@ handle_stat (Function, Stat, Value) ->
 ```
 
 The statistics currently collected are:
+
 * `decode_time`: The call arguments decoding time in microseconds.
 * `encode_time`: The call reply encoding time in microseconds.
 * `connect_time`: The total connect time in microseconds.

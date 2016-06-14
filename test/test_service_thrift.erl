@@ -52,6 +52,15 @@ function_info('throw_exception', exceptions) ->
   {struct, [{1, {struct, {'test_types', 'SimpleException'}}},
           {2, {struct, {'test_types', 'UnusedException'}}}]}
 ;
+% wait(This, Milliseconds)
+function_info('wait', params_type) ->
+  {struct, [{1, i32}]}
+;
+function_info('wait', reply_type) ->
+  {struct, []};
+function_info('wait', exceptions) ->
+  {struct, []}
+;
 % cast(This, Message)
 function_info('cast', params_type) ->
   {struct, [{1, string}]}

@@ -3,7 +3,7 @@
 -include("ox_thrift.hrl").
 -include("../src/ox_thrift_internal.hrl").
 
--export([ send/2, recv/2, close/1, make_get_socket/1, start_server/5, stop_server/0 ]).
+-export([ send/2, recv/3, close/1, make_get_socket/1, start_server/5, stop_server/0 ]).
 
 -define(LOCALHOST, "127.0.0.1").
 
@@ -13,8 +13,8 @@ send (Socket, Data) ->
   ?LOG("send(~p,~p) -> ~p\n", [ Socket, DataBin, X ]),
   X.
 
-recv (Socket, Length) ->
-  X = gen_tcp:recv(Socket, Length),
+recv (Socket, Length, Timeout) ->
+  X = gen_tcp:recv(Socket, Length, Timeout),
   ?LOG("recv(~p,~p) -> ~p\n", [ Socket, Length, X ]),
   X.
 

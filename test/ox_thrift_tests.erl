@@ -15,6 +15,7 @@
 -define(HANDLER, ?MODULE).
 -define(STATS_MODULE, ?MODULE).
 -define(STATS_TABLE, ox_thrift_stats).
+-define(RECV_TIMEOUT_CLIENT, 200).
 
 new_client_direct () ->
   create_stats_table(),
@@ -34,7 +35,7 @@ new_client_socket () ->
   create_stats_table(),
   socket_transport:start_server(?PORT, ?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
   SocketFun = socket_transport:make_get_socket(?PORT),
-  {ok, Client} = ox_thrift_client:new(SocketFun, socket_transport, ?PROTOCOL, ?SERVICE),
+  {ok, Client} = ox_thrift_client:new(SocketFun, socket_transport, ?PROTOCOL, ?SERVICE, [ {recv_timeout, ?RECV_TIMEOUT_CLIENT} ]),
   Client.
 
 destroy_client_socket (Client) ->
@@ -82,7 +83,7 @@ direct_test_ () ->
 socket_test_ () ->
   make_tests(socket, fun new_client_socket/0, fun destroy_client_socket/1).
 
-timeout_test () ->
+timeout_server_test () ->
   Client0 = new_client_socket(),
   ?assertEqual([], ets:lookup(?STATS_TABLE, {undefined, timeout})),
   application:set_env(ox_thrift, exceptions_include_traces, true),
@@ -95,6 +96,18 @@ timeout_test () ->
   ?assertEqual(3, Res2),
   ?assertEqual([ {{undefined, timeout}, 1} ], ets:lookup(?STATS_TABLE, {undefined, timeout})),
   destroy_client_socket(Client2).
+
+
+timeout_client_test () ->
+  Client0 = new_client_socket(),
+  {Client1, Res1} = ox_thrift_client:call(Client0, wait, [ ?RECV_TIMEOUT_CLIENT - 100 ]),
+  ?assertEqual(ok, Res1),
+  {'EXIT', {{Client2, Res2}, _}} = begin catch ox_thrift_client:call(Client1, wait, [ ?RECV_TIMEOUT_CLIENT + 100 ]) end,
+  ?assertEqual({error, timeout}, Res2),
+  %% Check that ox_thrift_client successfully reconnects after connection is closed.
+  {Client3, Res3} = ox_thrift_client:call(Client2, add_one, [ 123 ]),
+  ?assertEqual(124, Res3),
+  destroy_client_socket(Client3).
 
 
 skip_test () ->
@@ -264,6 +277,7 @@ cast_test (_TestType, NewClientFun, DestroyClientFun) ->
 handle_function (Function, Args) ->
   case Function of
     add_one -> [ In ] = Args, {reply, In + 1};
+    wait    -> [ Milliseconds ] = Args, timer:sleep(Milliseconds), ok;
     cast    -> [ Message ] = Args, io:format("~p\n", [ Message ]), ok;
     missing -> {reply, hd(Args)};
     _       -> Reply = apply(?MODULE, Function, Args),

@@ -61,6 +61,8 @@ service TestService {
   i32 throw_exception(1: byte throw_type)
     throws (1: SimpleException e, 2: UnusedException ue)
 
+  void wait(1: i32 milliseconds)
+
   oneway void cast(1: string message)
 
   MissingFields missing(1: MissingFields missing)

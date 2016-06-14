@@ -5,7 +5,7 @@
 
 -define(MAX_TRIES, 2).
 
--export([ new/4, close/1, get_socket/1, get_seqid/1, call/3 ]).
+-export([ new/4, new/5, close/1, get_socket/1, get_seqid/1, call/3 ]).
 
 -record(ox_thrift_client, {
           socket :: term(),
@@ -13,7 +13,8 @@
           transport_module = error({required, transport_module}) :: atom(),
           protocol_module = error({required, protocol_module}) :: atom(),
           service_module = error({required, service_module}) :: atom(),
-          seqid = 0 :: integer()}).
+          seqid = 0 :: integer(),
+          recv_timeout = 'infinity' :: non_neg_integer() | 'infinity' }).
 
 -define(RETURN_ERROR(Client, Error),
         begin
@@ -21,13 +22,25 @@
           error({close(Client), Error})
         end).
 
-new (SocketFun, Transport, Protocol, Service)
+new (SocketFun, Transport, Protocol, Service) ->
+  new(SocketFun, Transport, Protocol, Service, []).
+
+new (SocketFun, Transport, Protocol, Service, Options)
   when is_function(SocketFun, 0), is_atom(Transport), is_atom(Protocol), is_atom(Service) ->
-  {ok, #ox_thrift_client{
-          socket_fun = SocketFun,
-          transport_module = Transport,
-          protocol_module = Protocol,
-          service_module = Service}}.
+  Client0 = #ox_thrift_client{
+               socket_fun = SocketFun,
+               transport_module = Transport,
+               protocol_module = Protocol,
+               service_module = Service},
+  Client1 = parse_options(Options, Client0),
+  {ok, Client1}.
+
+
+parse_options([ {recv_timeout, RecvTimeout} | Options ], Client)
+  when (is_integer(RecvTimeout) andalso RecvTimeout >= 0) orelse (RecvTimeout =:= infinity) ->
+  parse_options(Options, Client#ox_thrift_client{recv_timeout = RecvTimeout});
+parse_options ([], Client) ->
+  Client.
 
 
 close (Client=#ox_thrift_client{socket=Socket, transport_module=Transport}) ->
@@ -75,12 +88,12 @@ call2 (Client=#ox_thrift_client{socket=Socket, transport_module=Transport}, Call
 %% that the socket is closed.
 call3 (Client=#ox_thrift_client{seqid=InSeqId}, call_oneway, _RequestMsg, _TriesLeft) ->
   {Client#ox_thrift_client{seqid = InSeqId + 1}, ok};
-call3 (Client=#ox_thrift_client{socket=Socket, transport_module=Transport}, call, RequestMsg, TriesLeft) ->
+call3 (Client=#ox_thrift_client{socket=Socket, transport_module=Transport, recv_timeout=RecvTimeout}, call, RequestMsg, TriesLeft) ->
   %% Implement thrift_framed_transport.
-  case Transport:recv(Socket, 4) of
+  case Transport:recv(Socket, 4, RecvTimeout) of
     {ok, LengthBin} ->
       <<Length:32/integer-signed-big>> = LengthBin,
-      case Transport:recv(Socket, Length) of
+      case Transport:recv(Socket, Length, RecvTimeout) of
         {ok, ReplyData} -> call4(Client, ReplyData);
         ErrorRecvData -> ?RETURN_ERROR(Client, ErrorRecvData)
       end;

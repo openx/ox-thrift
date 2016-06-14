@@ -8,7 +8,7 @@
 %%% instead of through a socket, and uses the process dictionary to remember
 %%% the thrift function's return value between calls to `send' and `recv'.
 
--export([ send/2, recv/2, close/1, make_get_socket/4 ]).
+-export([ send/2, recv/3, close/1, make_get_socket/4 ]).
 
 send (Config=#ox_thrift_config{}, Request) ->
   <<RequestLength:32/big-signed, RequestBin/binary>> = iolist_to_binary(Request),
@@ -24,7 +24,7 @@ send (Config=#ox_thrift_config{}, Request) ->
                ok
   end.
 
-recv (_Socket, Length) ->
+recv (_Socket, Length, _Timeout) ->
   <<Return:Length/binary, Rest/binary>> = get(?MODULE),
   put(?MODULE, Rest),
   {ok, Return}.
