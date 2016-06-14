@@ -7,7 +7,7 @@
 
 -record(ox_thrift_config, {
           service_module :: atom(),
-          codec_module :: atom(),
+          protocol_module :: atom(),
           handler_module :: atom(),
           options = [] :: list(ox_thrift_option()) }).
 

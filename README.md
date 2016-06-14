@@ -109,7 +109,7 @@ ranch:start_listener(?THRIFT_SERVICE_REF,
                      ox_thrift_server,        % Ranch protocol module.
                      #ox_thrift_config{
                         service_module = service_thrift,
-                        codec_module = ox_thrift_protocol_binary,
+                        protocol_module = ox_thrift_protocol_binary,
                         handler_module = ?MODULE}).
 ```
 

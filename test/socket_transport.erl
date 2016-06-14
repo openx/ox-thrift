@@ -34,7 +34,7 @@ make_get_socket (Port) ->
 
 -define(SERVICE_REF, test_service).
 
-start_server (Port, ServiceModule, CodecModule, HandlerModule, StatsModule) ->
+start_server (Port, ServiceModule, ProtocolModule, HandlerModule, StatsModule) ->
   case application:start(ranch) of
     ok                              -> ok;
     {error,{already_started,ranch}} -> ok;
@@ -43,7 +43,7 @@ start_server (Port, ServiceModule, CodecModule, HandlerModule, StatsModule) ->
 
   Config = #ox_thrift_config{
               service_module = ServiceModule,
-              codec_module = CodecModule,
+              protocol_module = ProtocolModule,
               handler_module = HandlerModule,
               options = [ {recv_timeout, 100}
                         , {stats_module, StatsModule} ] },

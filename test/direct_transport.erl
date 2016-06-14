@@ -32,12 +32,12 @@ recv (_Socket, Length, _Timeout) ->
 close (_Socket) ->
   ok.
 
--spec make_get_socket(Service::atom(), Codec::atom(), Handler::atom(), StatsModule::atom()) ->
+-spec make_get_socket(Service::atom(), Protocol::atom(), Handler::atom(), StatsModule::atom()) ->
                          GetSocketFun::fun(() -> Socket::term()).
-make_get_socket (Service, Codec, Handler, StatsModule) ->
+make_get_socket (Service, Protocol, Handler, StatsModule) ->
   Config = #ox_thrift_config{
               service_module = Service,
-              codec_module = Codec,
+              protocol_module = Protocol,
               handler_module = Handler,
               options = [ {stats_module, StatsModule} ]},
   fun () ->

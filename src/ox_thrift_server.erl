@@ -41,10 +41,10 @@ init (Ref, Socket, Transport, Config) ->
 
 
 -spec parse_config(#ox_thrift_config{}) -> #ts_config{}.
-parse_config (#ox_thrift_config{service_module=ServiceModule, codec_module=CodecModule, handler_module=HandlerModule, options=Options}) ->
+parse_config (#ox_thrift_config{service_module=ServiceModule, protocol_module=ProtocolModule, handler_module=HandlerModule, options=Options}) ->
   Config0 = #ts_config{
                service_module = ServiceModule,
-               codec_module = CodecModule,
+               protocol_module = ProtocolModule,
                handler_module = HandlerModule},
   parse_options(Options, Config0).
 
@@ -159,22 +159,22 @@ handle_error (State=#ts_state{socket=Socket, transport=Transport, config=#ts_con
   Transport:close(Socket).
 
 
-decode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, RequestData) ->
+decode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=undefined}, RequestData) ->
   %% Decode, not collecting stats.
-  CodecModule:decode_message(ServiceModule, RequestData);
-decode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=StatsModule}, RequestData) ->
+  ProtocolModule:decode_message(ServiceModule, RequestData);
+decode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=StatsModule}, RequestData) ->
   %% Decode, collecting stats.
-  {Elapsed, Result} = timer:tc(CodecModule, decode_message, [ ServiceModule, RequestData ]),
+  {Elapsed, Result} = timer:tc(ProtocolModule, decode_message, [ ServiceModule, RequestData ]),
   Function = element(1, Result),
   StatsModule:handle_stat(Function, decode_time, Elapsed),
   Result.
 
 
-encode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=undefined}, Function, MessageType, SeqId, Args) ->
+encode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=undefined}, Function, MessageType, SeqId, Args) ->
   %% Encode, not collecting stats.
-  CodecModule:encode_message(ServiceModule, Function, MessageType, SeqId, Args);
-encode(#ts_config{service_module=ServiceModule, codec_module=CodecModule, stats_module=StatsModule}, Function, MessageType, SeqId, Args) ->
+  ProtocolModule:encode_message(ServiceModule, Function, MessageType, SeqId, Args);
+encode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=StatsModule}, Function, MessageType, SeqId, Args) ->
   %% Encode, collecting stats.
-  {Elapsed, Result} = timer:tc(CodecModule, encode_message, [ ServiceModule, Function, MessageType, SeqId, Args ]),
+  {Elapsed, Result} = timer:tc(ProtocolModule, encode_message, [ ServiceModule, Function, MessageType, SeqId, Args ]),
   StatsModule:handle_stat(Function, encode_time, Elapsed),
   Result.
