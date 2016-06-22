@@ -151,30 +151,44 @@ reply_options ({ok, Options})           -> {undefined, Options}.
 
 handle_error (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule, stats_module=StatsModule}}, Function, Reason) ->
   StatsModule =/= undefined andalso
-    begin
-      StatsModule:handle_stat(Function, connect_time, timer:now_diff(os:timestamp(), State#ts_state.connect_time)),
-      StatsModule:handle_stat(Function, call_count, State#ts_state.call_count)
-    end,
+    StatsModule:handle_stats(Function, [ {connect_time, timer:now_diff(os:timestamp(), State#ts_state.connect_time)}
+                                       , {call_count, State#ts_state.call_count} ]),
   HandlerModule:handle_error(Function, Reason),
   Transport:close(Socket).
 
 
-decode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=undefined}, RequestData) ->
-  %% Decode, not collecting stats.
-  ProtocolModule:decode_message(ServiceModule, RequestData);
+-spec decode(Config::#ts_config{}, RequestData::binary()) -> Result::tuple().
 decode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=StatsModule}, RequestData) ->
-  %% Decode, collecting stats.
-  {Elapsed, Result} = timer:tc(ProtocolModule, decode_message, [ ServiceModule, RequestData ]),
-  Function = element(1, Result),
-  StatsModule:handle_stat(Function, decode_time, Elapsed),
+  Stats0 = collect_stats(StatsModule),
+  Result = ProtocolModule:decode_message(ServiceModule, RequestData),
+  case Stats0 of
+    undefined -> ok;
+    {TS0, Reductions0} ->
+      {TS1, Reductions1} = collect_stats(StatsModule),
+      Function = element(1, Result),
+      StatsModule:handle_stats(Function, [ {decode_time, timer:now_diff(TS1, TS0)}
+                                         , {decode_size, size(RequestData)}
+                                         , {decode_reductions, Reductions1 - Reductions0} ])
+  end,
   Result.
 
 
-encode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=undefined}, Function, MessageType, SeqId, Args) ->
-  %% Encode, not collecting stats.
-  ProtocolModule:encode_message(ServiceModule, Function, MessageType, SeqId, Args);
+-spec encode(Config::#ts_config{}, Function::atom(), MessageType::message_type(), Seqid::integer(), Args::term()) -> ReplyData::iolist().
 encode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=StatsModule}, Function, MessageType, SeqId, Args) ->
-  %% Encode, collecting stats.
-  {Elapsed, Result} = timer:tc(ProtocolModule, encode_message, [ ServiceModule, Function, MessageType, SeqId, Args ]),
-  StatsModule:handle_stat(Function, encode_time, Elapsed),
+  Stats0 = collect_stats(StatsModule),
+  Result = ProtocolModule:encode_message(ServiceModule, Function, MessageType, SeqId, Args),
+  case Stats0 of
+    undefined -> ok;
+    {TS0, Reductions0} ->
+      {TS1, Reductions1} = collect_stats(StatsModule),
+      StatsModule:handle_stats(Function, [ {encode_time, timer:now_diff(TS1, TS0)}
+                                         , {encode_size, iolist_size(Result)}
+                                         , {encode_reductions, Reductions1 - Reductions0} ])
+  end,
   Result.
+
+
+collect_stats (undefined) -> undefined;
+collect_stats (_)         -> TS = os:timestamp(),
+                             {reductions, Reductions} = process_info(self(), reductions),
+                             {TS, Reductions}.

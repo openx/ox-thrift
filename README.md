@@ -158,7 +158,7 @@ request. You can override this with the `recv_timeout` option.
 
 #### Stats Collection
 
-The OX Thrift server will optionally call a `handle_stat` function in
+The OX Thrift server will optionally call a `handle_stats` function in
 a module that you define when you start the Ranch listener.
 
 ``` erlang
@@ -168,14 +168,18 @@ a module that you define when you start the Ranch listener.
 The interface for the stats-collection function is:
 
 ``` erlang
-handle_stat (Function, Stat, Value) ->
+handle_stats (Function, [ {Stat, Value} ]) ->
   ok.
 ```
 
 The statistics currently collected are:
 
 * `decode_time`: The call arguments decoding time in microseconds.
+* `decode_size`: The size of the encoded Thrift message being decoded.
+* `decode_reductions`: The number of reductions consumed decoding the Thrift message.
 * `encode_time`: The call reply encoding time in microseconds.
+* `encode_size`: The size of the encoded Thrift message.
+* `encode_reductions`: The number of reductions consumed encoding the Thrift message.
 * `connect_time`: The total connect time in microseconds.
 * `call_count`: The number of calls to the Thrift server.
 

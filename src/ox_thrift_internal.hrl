@@ -25,6 +25,8 @@
 -define(tType_SET, 14).
 -define(tType_LIST, 15).
 
+-type message_type() :: 'call' | 'call_oneway' | 'reply_normal' | 'reply_exception' | 'exception'.
+
 % TMessageType
 -define(tMessageType_CALL, 1).
 -define(tMessageType_REPLY, 2).

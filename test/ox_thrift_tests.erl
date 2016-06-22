@@ -7,7 +7,7 @@
 
 -behaviour(ox_thrift_server).
 
--export([ handle_function/2, handle_error/2, handle_stat/3 ]).
+-export([ handle_function/2, handle_error/2, handle_stats/2 ]).
 -export([ sum_ints/2, echo/1, throw_exception/1 ]). % Export so that compiler doesn't complain about unused function.
 
 -define(SERVICE, test_service_thrift).
@@ -289,18 +289,23 @@ handle_error (Function, Reason) ->
   incr_stat({Function, Reason}, [ {2, 1} ]),
   ok.
 
-handle_stat (Function, Type, Value) ->
-  %% io:format(standard_error, "handle_stat ~p ~p ~p\n", [ Function, Type, Value ]),
-  {Key, Increment} =
-    case Type of
-      call_count   -> {Type, {2, Value}};
-      connect_time -> {Type, {2, Value}};
-      decode_time  -> {{Function, Type}, [ {2, 1}, {3, Value} ]};
-      encode_time  -> {{Function, Type}, [ {2, 1}, {3, Value} ]}
-    end,
-  incr_stat(Key, Increment),
-  ok.
+handle_stats (Function, Stats) ->
+  %% io:format(standard_error, "handle_stats ~p ~p ~p\n", [ Function, Type, Value ]),
+  lists:foreach(
+    fun ({Type, Value}) ->
+        {Key, Increment} =
+          case Type of
+            call_count   -> {Type, {2, Value}};
+            connect_time -> {Type, {2, Value}};
+            decode_time  -> {{Function, Type}, [ {2, 1}, {3, Value} ]};
+            encode_time  -> {{Function, Type}, [ {2, 1}, {3, Value} ]};
+            _            -> {skip, undefined}
 
+          end,
+        incr_stat(Key, Increment)
+    end, Stats).
+
+incr_stat (skip, _Increment) -> ok;
 incr_stat (Key, Increment) ->
   try ets:update_counter(?STATS_TABLE, Key, Increment)
   catch error:badarg ->

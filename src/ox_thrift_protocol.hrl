@@ -32,8 +32,6 @@ term_to_typeid ({map, _, _})             -> map.
         end).
 
 
--type message_type() :: 'call' | 'call_oneway' | 'reply_normal' | 'reply_exception' | 'exception'.
-
 -spec encode_call(ServiceModule::atom(), Function::atom(), SeqId::integer(), Args::term()) ->
                      {CallType::message_type(), Data::iolist()}.
 encode_call (ServiceModule, Function, SeqId, Args) ->
