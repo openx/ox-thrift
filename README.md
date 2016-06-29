@@ -25,6 +25,10 @@ the Apache Thrift Erlang library.
   expects the HandlerModule to take its arguments as a list instead of
   a tuple.
 
+* For a Thrift `map` type, for encoding OX Thrift will accept either a
+  dict (as Apache Thrift does) or a proplist.  For decoding, however,
+  OX Thrift always returns a dict (as Apache Thrift does).
+
 * Like the Apache Thrift Erlang library, OX Thrift does not enforce
   required struct fields, on either encoding or decoding.
 

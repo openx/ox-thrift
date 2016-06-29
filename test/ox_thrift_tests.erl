@@ -149,6 +149,7 @@ make_tests (TestType, NewClient, DestroyClient) ->
   , ?F(all_types_test)
   , ?F(throw_exception_test)
   , ?F(cast_test)
+  , ?F(proplist_as_map_test)
   ].
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -272,6 +273,23 @@ cast_test (_TestType, NewClientFun, DestroyClientFun) ->
   DestroyClientFun(Client1).
 
 
+proplist_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
+  Client0 = NewClientFun(),
+
+  PL0 = [ {1, <<"one">>}, {2, <<"two">>} ],
+  PL1 = lists:map(fun ({K, V}) -> {V, K} end, PL0),
+  D0 = dict:from_list(PL0),
+  D1 = dict:from_list(PL1),
+  {Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, PL0 ]),
+  ?assertEqual(D1, Reply1),
+
+  {Client2, Reply2} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, D0 ]),
+  ?assertEqual(D1, Reply2),
+
+  DestroyClientFun(Client2).
+
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 handle_function (Function, Args) ->
@@ -279,6 +297,13 @@ handle_function (Function, Args) ->
     add_one -> [ In ] = Args, {reply, In + 1};
     wait    -> [ Milliseconds ] = Args, timer:sleep(Milliseconds), ok;
     cast    -> [ Message ] = Args, io:format("~p\n", [ Message ]), ok;
+    swapkv  -> [ RetType, Dict ] = Args,
+               Proplist = dict:fold(fun (K, V, Acc) -> [ {V, K} | Acc ] end, [], Dict),
+               Reply = case RetType of
+                         ?TEST_MAPRET_RETURNMAP      -> dict:from_list(Proplist);
+                         ?TEST_MAPRET_RETURNPROPLIST -> Proplist
+                       end,
+               {reply, Reply};
     missing -> {reply, hd(Args)};
     _       -> Reply = apply(?MODULE, Function, Args),
                {reply, Reply}

@@ -159,15 +159,28 @@ encode ({map, KeyType, ValType}, Data) ->
   %% Encode a map.
   KeyTId = term_to_typeid(KeyType),
   ValTId = term_to_typeid(ValType),
-  [ write_map_begin(KeyTId, ValTId, dict:size(Data))
-  , dict:fold(fun (Key, Val, Acc) ->
-                  [ encode(KeyType, Key)
-                  , encode(ValType, Val)
-                  | Acc
-                  ]
+  if
+    is_list(Data) ->
+      %% Encode a proplist as a map.
+      [ write_map_begin(KeyTId, ValTId, length(Data))
+      , lists:foldl(fun ({Key, Val}, Acc) ->
+                        [ encode(KeyType, Key)
+                        , encode(ValType, Val)
+                        | Acc ]
+                    end, [], Data)
+      , write_map_end()
+      ];
+    true ->
+      %% Encode a dict as a map.
+      [ write_map_begin(KeyTId, ValTId, dict:size(Data))
+      , dict:fold(fun (Key, Val, Acc) ->
+                      [ encode(KeyType, Key)
+                      , encode(ValType, Val)
+                      | Acc ]
               end, [], Data)
-  , write_map_end()
-  ];
+      , write_map_end()
+      ]
+  end;
 
 encode ({set, Type}, Data) ->
   %% Encode a set.

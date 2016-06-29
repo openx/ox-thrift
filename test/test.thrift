@@ -51,6 +51,11 @@ enum ThrowType {
   Error = 3
 }
 
+enum MapRet {
+  ReturnMap = 0
+  ReturnProplist = 1
+}
+
 service TestService {
   i32 add_one(1: i32 input)
 
@@ -64,6 +69,8 @@ service TestService {
   void wait(1: i32 milliseconds)
 
   oneway void cast(1: string message)
+
+  map<string,i32> swapkv(1: MapRet return_type, 2: map<i32,string> input)
 
   MissingFields missing(1: MissingFields missing)
 }

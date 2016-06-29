@@ -70,6 +70,16 @@ function_info('cast', reply_type) ->
 function_info('cast', exceptions) ->
   {struct, []}
 ;
+% swapkv(This, Return_type, Input)
+function_info('swapkv', params_type) ->
+  {struct, [{1, i32},
+          {2, {map, i32, string}}]}
+;
+function_info('swapkv', reply_type) ->
+  {map, string, i32};
+function_info('swapkv', exceptions) ->
+  {struct, []}
+;
 % missing(This, Missing)
 function_info('missing', params_type) ->
   {struct, [{1, {struct, {'test_types', 'MissingFields'}}}]}

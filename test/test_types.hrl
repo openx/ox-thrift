@@ -6,6 +6,9 @@
 -define(TEST_THROWTYPE_UNDECLAREDEXCEPTION, 2).
 -define(TEST_THROWTYPE_ERROR, 3).
 
+-define(TEST_MAPRET_RETURNMAP, 0).
+-define(TEST_MAPRET_RETURNPROPLIST, 1).
+
 %% struct 'AllTypes'
 
 -record('AllTypes', {'bool_field' :: boolean(),
