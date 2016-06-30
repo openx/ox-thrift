@@ -26,3 +26,4 @@ fw-pkgtmp
 install-sh
 missing
 rebar
+rebar.config.script

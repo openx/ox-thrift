@@ -1,6 +1,8 @@
 # The FW_PACKAGE_MAINTAINER field is populated with the environment
 # variable FW_PACKAGE_DEFAULT_MAINTAINER if non-empty at init time
 
+BUILD_PREFIX=${BUILD_PREFIX:-erlang-r15b-}
+
 FW_PACKAGE_NAME="${BUILD_PREFIX}ox-thrift"
 FW_PACKAGE_VERSION="0.4.0"
 FW_PACKAGE_MAINTAINER="david.hull <david.hull@openx.com>"
@@ -17,12 +19,12 @@ FW_PACKAGE_ARCHITECTURE_DEPENDENT="1"
 # For other packaging systems, the syntax is translated for you.
 
 FW_PACKAGE_DEPENDS=""
-FW_PACKAGE_CONFLICTS=""
+FW_PACKAGE_CONFLICTS="ox-thrift" # (rpm)
 FW_PACKAGE_PROVIDES=""
-FW_PACKAGE_REPLACES=""
+FW_PACKAGE_REPLACES="ox-thrift" # (deb)
 FW_PACKAGE_SUGGESTS=""
 
-FW_PACKAGE_BUILD_DEPENDS="erlang-r15b-ranch (>= 0.8.0)"
+FW_PACKAGE_BUILD_DEPENDS="${BUILD_PREFIX}ranch (>= 0.8.0)"
 FW_PACKAGE_BUILD_CONFLICTS=""
 
 # dupload is used for submitting debian packages to a package archive
