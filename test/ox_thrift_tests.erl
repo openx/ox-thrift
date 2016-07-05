@@ -283,7 +283,7 @@ proplist_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
   {Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, PL0 ]),
   ?assertEqual(D1, Reply1),
 
-  {Client2, Reply2} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, D0 ]),
+  {Client2, Reply2} = ox_thrift_client:call(Client1, swapkv, [ ?TEST_MAPRET_RETURNMAP, D0 ]),
   ?assertEqual(D1, Reply2),
 
   DestroyClientFun(Client2).
