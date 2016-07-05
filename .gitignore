@@ -1,6 +1,7 @@
 *.pc
 *.tar.gz
 *.tgz
+.dialyzer_ok
 .eunit
 .eunit/
 .generated_app_file

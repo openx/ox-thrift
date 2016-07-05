@@ -1,6 +1,8 @@
 -ifndef(_test_types_included).
 -define(_test_types_included, yeah).
 
+-include("namespaced_types.hrl").
+
 -define(TEST_THROWTYPE_NORMALRETURN, 0).
 -define(TEST_THROWTYPE_DECLAREDEXCEPTION, 1).
 -define(TEST_THROWTYPE_UNDECLAREDEXCEPTION, 2).
@@ -19,15 +21,15 @@
                      'double_field' :: float(),
                      'string_field' :: string() | binary(),
                      'int_list' :: list(),
-                     'string_set' :: set(),
-                     'string_int_map' :: dict()}).
+                     'string_set' :: remote_set(),
+                     'string_int_map' :: remote_dict()}).
 -type 'AllTypes'() :: #'AllTypes'{}.
 
 %% struct 'Integers'
 
 -record('Integers', {'int_field' :: integer(),
                      'int_list' :: list(),
-                     'int_set' :: set()}).
+                     'int_set' :: remote_set()}).
 -type 'Integers'() :: #'Integers'{}.
 
 %% struct 'Container'
@@ -46,7 +48,7 @@
                           'fifth' :: string() | binary(),
                           'sixth_skip' :: 'AllTypes'(),
                           'seventh' :: boolean(),
-                          'eighth_skip' :: dict(),
+                          'eighth_skip' :: remote_dict(),
                           'ninth' :: integer()}).
 -type 'MissingFields'() :: #'MissingFields'{}.
 
