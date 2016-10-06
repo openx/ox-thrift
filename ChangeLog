@@ -1,3 +1,6 @@
+* Thu Oct 6 2016 David Hull <david.hull@openx.com> 0.6.0
+- APPS-13779: Add encode_record and decode_record functions.
+
 * Wed Jun 29 2016 David Hull <david.hull@openx.com> 0.5.0
 - When encoding a map type, accept a proplist as well as a dict.
 

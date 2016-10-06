@@ -16,6 +16,18 @@
 %% typeid_to_atom(?tType_SET)      -> set;
 %% typeid_to_atom(?tType_LIST)     -> list.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+encode_record ({Schema, StructName}, Record) when StructName =:= element(1, Record) ->
+  iolist_to_binary(encode(Schema:struct_info(StructName), Record)).
+
+decode_record ({Schema, StructName}, Buffer) ->
+  {<<>>, Record} = decode_record(Buffer, StructName, Schema:struct_info(StructName)),
+  Record.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -spec term_to_typeid(Term::struct_type()) -> TypeId::proto_type().
 term_to_typeid (A) when is_atom(A)       -> A;
 term_to_typeid ({A, _}) when is_atom(A)  -> A;

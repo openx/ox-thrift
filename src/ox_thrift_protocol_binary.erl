@@ -4,6 +4,8 @@
 
 -export([ encode_call/4, encode_message/5, decode_message/2 ]).
 
+-export([ encode_record/2, decode_record/2 ]).
+
 -include("ox_thrift_protocol.hrl").
 
 -compile({inline, [ write_message_begin/3

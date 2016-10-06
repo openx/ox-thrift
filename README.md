@@ -188,6 +188,24 @@ The statistics currently collected are:
 * `call_count`: The number of calls to the Thrift server.
 
 
+### Direct Encoding and Decoding of Records to and from Binaries
+
+The `ox_thrift_protocol_binary:encode_record/2` function encodes a
+Thrift struct record to a binary, and
+`ox_thrift_protocol_binary:decode_record/2` decodes the binary back to
+the original record.
+
+``` erlang
+Binary = encode_record({ServiceTypesModule, StructName}, Record)
+```
+
+``` erlang
+Record = decode_record({ServiceTypesModule, StructName}, Binary)
+```
+
+If your Thrift service is "svc" the ServiceTypesModule will be `svc_types`.
+
+
 ## Speedup
 
 These numbers were taken from benchmarks of a production SSRTB system.
