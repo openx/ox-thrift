@@ -48,15 +48,17 @@ module.  This module exports two functions, `new`, and `call`.
 #### `new` -- Manage a Connection to a Thrift Server
 
 ``` erlang
-{ok, Client} = ox_thrift_client:new(SocketFun, Transport, Protocol, Service)
-{ok, Client} = ox_thrift_client:new(SocketFun, Transport, Protocol, Service, Options)
+{ok, Client} = ox_thrift_client:new(Connection, ConnectionState, Transport, Protocol, Service)
+{ok, Client} = ox_thrift_client:new(Connection, ConnectionState, Transport, Protocol, Service, Options)
 ```
 
-* SocketFun: A zero-arity function that returns a new passive-mode
-  connection to the Thrift server.  The OX Thrift client will call
-  this function to open the initial connection to the Thrift server,
-  and to open a new connection whenever it encounters an error on the
-  existing connection.
+* Connection: A module that manages a connection to the Thrift server.
+  This module must support the interface defined by
+  `ox_thrift_connection`.  The OX Thrift client will call the module's
+  `checkout` and `checkin` functions.  The OX Thrift library supplies
+  `ox_thrift_reconnecting_socket`, a simple reconnecting TCP
+  connection module that supplies this interface.
+* ConnectionState: State managed by the Connection module.
 * Transport: A module that provides the transport layer, such as
   `gen_tcp`.  This module is expected to export `send/2`, `recv/3`,
   and `close/1` functions.
@@ -68,20 +70,9 @@ module.  This module exports two functions, `new`, and `call`.
     * `{recv_timeout, Milliseconds}` or `{recv_timeout, infinity}` The
        receive timeout.  The default is `infinity`.
 
-The following shows an example SocketFun for use with the `gen_tcp` Transport.
-
-``` erlang
-make_get_socket (Host, Port) ->
-  fun () ->
-      case gen_tcp:connect(Host, Port, [ binary, {active, false} ]) of
-        {ok, Socket} -> Socket;
-        {error, Reason} -> error({connect, Host, Port, Reason})
-      end
-  end.
-```
-
-The OX Thrift library expects the Transport module to support the
-following functions on this Socket.
+The Connection module's `checkout` function should return a socket
+Socket, and the OX Thrift library expects the Transport module to
+support the following functions on this Socket.
 
 * `ok = Transport:send(Socket, IOData)`,
 * `{ok, Binary} = Transport:recv(Socket, Length, Timeout)`, and
