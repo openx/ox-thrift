@@ -1,3 +1,6 @@
+%% Copyright 2016, OpenX.  All rights reserved.
+%% Licensed under the conditions specified in the accompanying LICENSE file.
+
 -module(socket_transport).
 
 -include("ox_thrift.hrl").

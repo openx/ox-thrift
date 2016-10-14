@@ -1,6 +1,5 @@
--ifndef(_ox_thrift_internal_included).
--define(_ox_thrift_internal_included, true).
-
+-ifndef(OX_THRIFT_INTERNAL_INCLUDED).
+-define(OX_THRIFT_INTERNAL_INCLUDED, true).
 
 -record(ts_config, {
           service_module :: atom(),
@@ -49,4 +48,4 @@
 %% -define(LOG(Format, Args), io:format(standard_error, "~s:~p: " ++ Format, [ ?MODULE, ?LINE | Args ])).
 -define(LOG(Format, Args), ok).
 
--endif. %% _ox_thrift_internal_included.
+-endif. %% ! OX_THRIFT_INTERNAL_INCLUDED.

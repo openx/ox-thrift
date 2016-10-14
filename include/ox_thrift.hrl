@@ -1,5 +1,5 @@
--ifndef(OX_THRIFT_HRL_INCLUDED).
--define(OX_THRIFT_HRL_INCLUDED, true).
+-ifndef(OX_THRIFT_INCLUDED).
+-define(OX_THRIFT_INCLUDED, true).
 
 -type ox_thrift_option() ::
         { recv_timeout, RecvTimeout :: non_neg_integer() | 'infinity' } |
@@ -27,4 +27,4 @@
           message::binary(),
           type::integer() }).
 
--endif. %% OX_THRIFT_HRL_INCLUDED
+-endif. %% ! OX_THRIFT_INCLUDED
