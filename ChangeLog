@@ -1,3 +1,6 @@
+* Thu Mar 23 2017 David Hull <david.hull@openx.com> 0.8.0
+- Rework thrift client connection handling.
+
 * Thu Nov 10 2016 David Hull <david.hull@openx.com> 0.7.0
 - APPS-14103: Add compact protocol support.
 

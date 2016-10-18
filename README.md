@@ -56,8 +56,8 @@ module.  This module exports two functions, `new`, and `call`.
   This module must support the interface defined by
   `ox_thrift_connection`.  The OX Thrift client will call the module's
   `checkout` and `checkin` functions.  The OX Thrift library supplies
-  `ox_thrift_reconnecting_socket`, a simple reconnecting TCP
-  connection module that supplies this interface.
+  several modules that implement this interface, described in the
+  [Connection Managers](#connection-managers) section below.
 * ConnectionState: State managed by the Connection module.
 * Transport: A module that provides the transport layer, such as
   `gen_tcp`.  This module is expected to export `send/2`, `recv/3`,
@@ -88,6 +88,23 @@ support the following functions on this Socket.
   `ox_thrift_client:new` call.
 * Function: An atom representing the function to call.
 * Args: A list containing the arguments to Function.
+
+#### Connection Managers
+
+OX Thrift supplies several connection managers for use with the OX
+Thrift client.
+
+* `ox_thrift_simple_socket` implements a non-reconnecting connection
+  to the Thrift server.
+
+* `ox_thrift_reconnecting_socket` implements a simple dedicated
+  connection to the Thrift server that automatically reopens the
+  connection when there is an error.
+
+* `ox_thrift_socket_pool` implements a pool of connections that can be
+  shared among multiple processes.  The pool is managed by a
+  gen_server which you are expected to link into your supervisor tree
+  by calling the `ox_thrift_socket_pool:start_link/4` function.
 
 ### Server
 
@@ -243,3 +260,9 @@ See the [message protocol documentation](MessageProtocol.md).
 * Erik van Oosten's
   [Thrift Specification -- Remote Procedure Call](https://erikvanoosten.github.io/thrift-missing-specification/)
   (a.k.a, "Thrift: The Missing Specification").
+
+## Acknowledgements
+
+Many thanks to [Yoshihiro Tanaka](https://github.com/hirotnk)
+and [Anthony Molinaro](https://github.com/djnym) for their insights
+and suggestions.
