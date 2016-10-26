@@ -12,59 +12,57 @@
 -include("ox_thrift_protocol.hrl").
 
 -compile({inline, [ write_message_begin/3
-                  , write_message_end/0
                   , write_field_begin/2
                   , write_field_stop/0
-                  , write_field_end/0
                   , write_map_begin/3
-                  , write_map_end/0
-                  , write_list_begin/2
-                  , write_list_end/0
-                  , write_set_begin/2
-                  , write_set_end/0
-                  , write_struct_begin/1
-                  , write_struct_end/0
+                  , write_list_or_set_begin/2
                   , write/2
                   , read_message_begin/1
-                  , read_message_end/1
-                  , read_struct_begin/1
-                  , read_struct_end/1
                   , read_field_begin/1
-                  , read_field_end/1
                   , read_map_begin/1
-                  , read_map_end/1
-                  , read_list_begin/1
-                  , read_list_end/1
-                  , read_set_begin/1
-                  , read_set_end/1
+                  , read_list_or_set_begin/1
                   , read/2 ]}).
 %% -compile(inline_list_funcs).
 
-%% term_to_wire(field_stop)        -> ?tType_STOP;
-term_to_wire(bool)              -> ?tType_BOOL;
-term_to_wire(byte)              -> ?tType_BYTE;
-term_to_wire(double)            -> ?tType_DOUBLE;
-term_to_wire(i16)               -> ?tType_I16;
-term_to_wire(i32)               -> ?tType_I32;
-term_to_wire(i64)               -> ?tType_I64;
-term_to_wire(string)            -> ?tType_STRING;
-term_to_wire(struct)            -> ?tType_STRUCT;
-term_to_wire(map)               -> ?tType_MAP;
-term_to_wire(set)               -> ?tType_SET;
-term_to_wire(list)              -> ?tType_LIST.
+-define(TYPE_BIN_STOP, 0).
+-define(TYPE_BIN_VOID, 1).
+-define(TYPE_BIN_BOOL, 2).
+-define(TYPE_BIN_BYTE, 3).
+-define(TYPE_BIN_DOUBLE, 4).
+-define(TYPE_BIN_I16, 6).
+-define(TYPE_BIN_I32, 8).
+-define(TYPE_BIN_I64, 10).
+-define(TYPE_BIN_STRING, 11).
+-define(TYPE_BIN_STRUCT, 12).
+-define(TYPE_BIN_MAP, 13).
+-define(TYPE_BIN_SET, 14).
+-define(TYPE_BIN_LIST, 15).
 
-%% wire_to_term(?tType_STOP)       -> field_stop;
-wire_to_term(?tType_BOOL)       -> bool;
-wire_to_term(?tType_BYTE)       -> byte;
-wire_to_term(?tType_DOUBLE)     -> double;
-wire_to_term(?tType_I16)        -> i16;
-wire_to_term(?tType_I32)        -> i32;
-wire_to_term(?tType_I64)        -> i64;
-wire_to_term(?tType_STRING)     -> string;
-wire_to_term(?tType_STRUCT)     -> struct;
-wire_to_term(?tType_MAP)        -> map;
-wire_to_term(?tType_SET)        -> set;
-wire_to_term(?tType_LIST)       -> list.
+%% term_to_wire(field_stop)     -> ?TYPE_BIN_STOP;
+term_to_wire(bool)              -> ?TYPE_BIN_BOOL;
+term_to_wire(byte)              -> ?TYPE_BIN_BYTE;
+term_to_wire(double)            -> ?TYPE_BIN_DOUBLE;
+term_to_wire(i16)               -> ?TYPE_BIN_I16;
+term_to_wire(i32)               -> ?TYPE_BIN_I32;
+term_to_wire(i64)               -> ?TYPE_BIN_I64;
+term_to_wire(string)            -> ?TYPE_BIN_STRING;
+term_to_wire(struct)            -> ?TYPE_BIN_STRUCT;
+term_to_wire(map)               -> ?TYPE_BIN_MAP;
+term_to_wire(set)               -> ?TYPE_BIN_SET;
+term_to_wire(list)              -> ?TYPE_BIN_LIST.
+
+%% wire_to_term(?TYPE_BIN_STOP) -> field_stop;
+wire_to_term(?TYPE_BIN_BOOL)    -> bool;
+wire_to_term(?TYPE_BIN_BYTE)    -> byte;
+wire_to_term(?TYPE_BIN_DOUBLE)  -> double;
+wire_to_term(?TYPE_BIN_I16)     -> i16;
+wire_to_term(?TYPE_BIN_I32)     -> i32;
+wire_to_term(?TYPE_BIN_I64)     -> i64;
+wire_to_term(?TYPE_BIN_STRING)  -> string;
+wire_to_term(?TYPE_BIN_STRUCT)  -> struct;
+wire_to_term(?TYPE_BIN_MAP)     -> map;
+wire_to_term(?TYPE_BIN_SET)     -> set;
+wire_to_term(?TYPE_BIN_LIST)    -> list.
 
 %% -define(DEBUG_READ, true).
 
@@ -82,53 +80,28 @@ write_message_begin (Name, Type, SeqId) ->
   NameLen = size(Name),
   <<?VERSION_1/binary, 0, Type, NameLen:32/big-signed, Name/binary, SeqId:32/big-signed>>.
 
-write_message_end () ->
-  [].
-
 write_field_begin (Type, Id) ->
   TypeWire = term_to_wire(Type),
   <<TypeWire:8/big-signed, Id:16/big-signed>>.
 
 write_field_stop () ->
-  <<?tType_STOP:8/big-signed>>.
-
-write_field_end () ->
-  [].
+  ?TYPE_BIN_STOP.
 
 write_map_begin (KType, VType, Size) ->
   KTypeWire = term_to_wire(KType),
   VTypeWire = term_to_wire(VType),
   <<KTypeWire:8/big-signed, VTypeWire:8/big-signed, Size:32/big-signed>>.
 
-write_map_end () ->
-  [].
-
-write_list_begin (EType, Size) ->
+write_list_or_set_begin (EType, Size) ->
   ETypeWire = term_to_wire(EType),
   <<ETypeWire:8/big-signed, Size:32/big-signed>>.
-
-write_list_end () ->
-  [].
-
-write_set_begin (EType, Size) ->
-  ETypeWire = term_to_wire(EType),
-  <<ETypeWire:8/big-signed, Size:32/big-signed>>.
-
-write_set_end () ->
-  [].
-
-write_struct_begin (_Name) ->
-  [].
-
-write_struct_end () ->
-  [].
 
 
 write (bool, true) ->
-  <<1:8/big-signed>>;
+  1;
 
 write (bool, false) ->
-  <<0:8/big-signed>>;
+  0;
 
 write (byte, Byte) ->
   <<Byte:8/big-signed>>;
@@ -148,11 +121,11 @@ write (double, Double) ->
 write (string, Str) when is_list(Str) ->
   Bin = list_to_binary(Str),
   BinLen = size(Bin),
-  <<BinLen:32/big-signed, Bin/binary>>;
+  [ <<BinLen:32/big-signed>>, Bin ];
 
 write (string, Bin) when is_binary(Bin) ->
   BinLen = size(Bin),
-  <<BinLen:32/big-signed, Bin/binary>>.
+  [ <<BinLen:32/big-signed>>, Bin ].
 
 
 -ifdef(DEBUG_READ).
@@ -183,37 +156,21 @@ read_message_begin (Data0) ->
       error({bad_binary_protocol_version, Version})
   end.
 
--spec read_message_end (IData::binary()) -> OData::binary().
-read_message_end (Data) ->
-  Data.
-
--spec read_struct_begin (IData::binary()) -> OData::binary().
-read_struct_begin (Data) ->
-  Data.
-
--spec read_struct_end (IData::binary()) -> OData::binary().
-read_struct_end (Data) ->
-  Data.
-
 -spec read_field_begin (IData::binary()) -> {OData::binary(), Type::proto_type(), Id::integer()}
                                           | {OData::binary(), field_stop, 'undefined'}.
 read_field_begin (Data0) ->
   case Data0 of
-    <<?tType_STOP:8/big-signed, Data1/binary>>  ->
+    <<?TYPE_BIN_STOP:8/big-signed, Data1/binary>>  ->
       {Data1, field_stop, undefined};
     <<Type:8/big-signed, Id:16/big-signed, Data1/binary>> ->
       {Data1, wire_to_term(Type), Id}
   end.
 
--spec read_field_end (IData::binary()) -> OData::binary().
-read_field_end (Data) ->
-  Data.
-
 %% This isn't necessary, since we never explicitly read a `field_stop', we
 %% just find it when trying to read a `field_begin'.
 %%
 %% ?READ (field_stop, Data0) ->
-%%   {?tType_STOP, Data1} = read(?tType_BYTE, Data0),
+%%   {?TYPE_BIN_STOP, Data1} = read(?TYPE_BIN_BYTE, Data0),
 %%   {ok, Data1};
 
 -spec read_map_begin(IData::binary()) -> {OData::binary(), KType::proto_type(), VType::proto_type(), Size::integer()}.
@@ -221,27 +178,10 @@ read_map_begin (Data0) ->
   <<KType:8/big-signed, VType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
   {Data1, wire_to_term(KType), wire_to_term(VType), Size}.
 
--spec read_map_end (IData::binary()) -> OData::binary().
-read_map_end (Data) ->
-  Data.
-
--spec read_list_begin(IData::binary()) -> {OData::binary(), EType::proto_type(), Size::integer()}.
-read_list_begin (Data0) ->
+-spec read_list_or_set_begin(IData::binary()) -> {OData::binary(), EType::proto_type(), Size::integer()}.
+read_list_or_set_begin (Data0) ->
   <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
   {Data1, wire_to_term(EType), Size}.
-
--spec read_list_end (IData::binary()) -> OData::binary().
-read_list_end (Data) ->
-  Data.
-
--spec read_set_begin(IData::binary()) -> {OData::binary(), EType::proto_type(), Size::integer()}.
-read_set_begin (Data0) ->
-  <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {Data1, wire_to_term(EType), Size}.
-
--spec read_set_end (IData::binary()) -> OData::binary().
-read_set_end (Data) ->
-  Data.
 
 
 ?READ (Data0, bool) ->
@@ -309,31 +249,18 @@ field_test () ->
   Type = i32,
   Id = 16#7FF0,
   %% Name is not sent in binary protocol.
-  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id)))),
-
-  ?assertEqual(<<>>, read_field_end(iolist_to_binary(write_field_end()))).
+  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id)))).
 
 map_test () ->
   KType = byte,
   VType = string,
   Size = 16#7FFFFFF1,
-  ?assertEqual({<<>>, KType, VType, Size}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size)))),
+  ?assertEqual({<<>>, KType, VType, Size}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size)))).
 
-  ?assertEqual(<<>>, read_map_end(iolist_to_binary(write_map_end()))).
-
-list_test () ->
+list_or_set_test () ->
   EType = byte,
   Size = 16#7FFFFFF2,
-  ?assertEqual({<<>>, EType, Size}, read_list_begin(iolist_to_binary(write_list_begin(EType, Size)))),
-
-  ?assertEqual(<<>>, read_list_end(iolist_to_binary(write_list_end()))).
-
-set_test () ->
-  EType = byte,
-  Size = 16#7FFFFFF3,
-  ?assertEqual({<<>>, EType, Size}, read_set_begin(iolist_to_binary(write_set_begin(EType, Size)))),
-
-  ?assertEqual(<<>>, read_set_end(iolist_to_binary(write_set_end()))).
+  ?assertEqual({<<>>, EType, Size}, read_list_or_set_begin(iolist_to_binary(write_list_or_set_begin(EType, Size)))).
 
 basic_test () ->
   B = 16#7F,

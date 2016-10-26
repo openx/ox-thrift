@@ -4,20 +4,6 @@
 -include("ox_thrift_internal.hrl").
 -include("ox_thrift.hrl").
 
-%% typeid_to_atom(?tType_STOP)     -> field_stop;
-%% typeid_to_atom(?tType_VOID)     -> void;
-%% typeid_to_atom(?tType_BOOL)     -> bool;
-%% typeid_to_atom(?tType_BYTE)     -> byte;
-%% typeid_to_atom(?tType_DOUBLE)   -> double;
-%% typeid_to_atom(?tType_I16)      -> i16;
-%% typeid_to_atom(?tType_I32)      -> i32;
-%% typeid_to_atom(?tType_I64)      -> i64;
-%% typeid_to_atom(?tType_STRING)   -> string;
-%% typeid_to_atom(?tType_STRUCT)   -> struct;
-%% typeid_to_atom(?tType_MAP)      -> map;
-%% typeid_to_atom(?tType_SET)      -> set;
-%% typeid_to_atom(?tType_LIST)     -> list.
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 encode_record ({Schema, StructName}, Record) when StructName =:= element(1, Record) ->
@@ -142,17 +128,13 @@ encode_message (ServiceModule, Function, MessageType, SeqId, Args) ->
     %% Thrift supports only lists of uniform types, and so it uses a
     %% function-specific struct for a function's argument list.
   , encode(MessageSpec, ArgsList)
-  , write_message_end()
   ].
 
 
 encode ({struct, StructDef}, Data)
   when is_list(StructDef), is_tuple(Data), length(StructDef) == size(Data) - 1 ->
   %% Encode a record from a struct definition.
-  [ write_struct_begin(element(1, Data))
-  , encode_struct(StructDef, Data, 2)
-  , write_struct_end()
-  ];
+  encode_struct(StructDef, Data, 2);
 
 encode ({struct, {Schema, StructName}}, Data)
   when is_atom(Schema), is_atom(StructName), is_tuple(Data), element(1, Data) == StructName ->
@@ -166,9 +148,8 @@ encode ({list, Type}, Data)
   when is_list(Data) ->
   %% Encode a list.
   EltTId = term_to_typeid(Type),
-  [ write_list_begin(EltTId, length(Data))
+  [ write_list_or_set_begin(EltTId, length(Data))
   , lists:map(fun (Elt) -> encode(Type, Elt) end, Data)
-  , write_list_end()
   ];
 
 encode ({map, KeyType, ValType}, Data) ->
@@ -184,7 +165,6 @@ encode ({map, KeyType, ValType}, Data) ->
                         , encode(ValType, Val)
                         | Acc ]
                     end, [], Data)
-      , write_map_end()
       ];
     true ->
       %% Encode a dict as a map.
@@ -194,16 +174,14 @@ encode ({map, KeyType, ValType}, Data) ->
                       , encode(ValType, Val)
                       | Acc ]
               end, [], Data)
-      , write_map_end()
       ]
   end;
 
 encode ({set, Type}, Data) ->
   %% Encode a set.
   EltType = term_to_typeid(Type),
-  [ write_set_begin(EltType, sets:size(Data))
+  [ write_list_or_set_begin(EltType, sets:size(Data))
   , sets:fold(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
-  , write_set_end()
   ];
 
 encode (Type, Data) when is_atom(Type) ->
@@ -226,7 +204,6 @@ encode_struct ([ {FieldId, Type} | FieldRest ], Record, I) ->
       FieldTypeId = term_to_typeid(Type),
       [ write_field_begin(FieldTypeId, FieldId)
       , encode(Type, Data)
-      , write_field_end()
       | encode_struct(FieldRest, Record, I+1)
       ]
   end;
@@ -266,7 +243,7 @@ decode_message (ServiceModule, Buffer0) ->
       MessageSpec = ?tApplicationException_Structure,
       {Buffer2, Args} = decode_record(Buffer1, application_exception, MessageSpec)
   end,
-  <<>> = read_message_end(Buffer2),
+  <<>> = Buffer2,
   %% io:format(standard_error, "decode\nspec ~p\nargs ~p\n", [ MessageSpec, Args ]),
   {Function, MessageType, SeqId, Args}.
 
@@ -294,26 +271,23 @@ decode (Buffer, {struct, {Schema, StructName}})
   decode_record(Buffer, StructName, Schema:struct_info(StructName));
 
 decode (Buffer0, _T={list, Type}) ->
-  {Buffer1, EType, Size} = read_list_begin(Buffer0),
+  {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_list(Buffer1, Type, [], Size),
-  Buffer3 = read_list_end(Buffer2),
-  {Buffer3, List};
+  {Buffer2, List};
 
 decode (Buffer0, _T={map, KeyType, ValType}) ->
   {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
   ?VALIDATE_TYPE(KeyType, KType, [ Buffer0, _T ]),
   ?VALIDATE_TYPE(ValType, VType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, [], Size),
-  Buffer3 = read_map_end(Buffer2),
-  {Buffer3, dict:from_list(List)};
+  {Buffer2, dict:from_list(List)};
 
 decode (Buffer0, _T={set, Type}) ->
-  {Buffer1, EType, Size} = read_set_begin(Buffer0),
+  {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
   {Buffer2, List} = decode_set(Buffer1, Type, [], Size),
-  Buffer3 = read_set_end(Buffer2),
-  {Buffer3, sets:from_list(List)};
+  {Buffer2, sets:from_list(List)};
 
 decode (Buffer0, Type) when is_atom(Type) ->
   %% Decode the basic types.
@@ -324,14 +298,11 @@ decode (Buffer0, Type) when is_atom(Type) ->
 decode_record (Buffer0, Name, {struct, StructDef})
   when is_atom(Name), is_list(StructDef) ->
   %% Decode a record from a struct definition.
-  Buffer1 = read_struct_begin(Buffer0),
   %% If we were going to handle field defaults we could create the initialize
   %% here.  It might be better to wait until after the struct is parsed,
   %% however, to avoid unnecessarily creating initializers for fields that
   %% don't need them. @@
-  {Buffer2, Record} = decode_struct(Buffer1, StructDef, [ {1, Name} ]),
-  Buffer3 = read_struct_end(Buffer2),
-  {Buffer3, Record}.
+  decode_struct(Buffer0, StructDef, [ {1, Name} ]).
 
 
 -spec decode_struct(BufferIn::binary(), FieldList::list(), Acc::list()) -> {binary(), tuple()}.
@@ -346,13 +317,11 @@ decode_struct (Buffer0, FieldList, Acc) ->
         {FieldTypeAtom, N} ->
           ?VALIDATE_TYPE(FieldTypeAtom, FieldType, [ Buffer0, FieldList, Acc ]),
           {Buffer2, Val} = decode(Buffer1, FieldTypeAtom),
-          Buffer3 = read_field_end(Buffer2),
-          decode_struct(Buffer3, FieldList, [ {N, Val} | Acc ]);
+          decode_struct(Buffer2, FieldList, [ {N, Val} | Acc ]);
         false ->
           %% io:format("field ~p not found in ~p\n", [ FieldId, FieldList ]),
           Buffer2 = skip(Buffer1, FieldType),
-          Buffer3 = read_field_end(Buffer2),
-          decode_struct(Buffer3, FieldList, Acc)
+          decode_struct(Buffer2, FieldList, Acc)
       end
   end.
 
@@ -383,34 +352,29 @@ decode_set (Buffer0, EType, Acc, N) ->
 
 -spec skip(Buffer0::binary(), Type::atom()) -> Buffer1::binary().
 skip (Buffer0, struct) ->
-  Buffer1 = read_struct_begin(Buffer0),
-  Buffer2 = skip_struct(Buffer1),
-  read_struct_end(Buffer2);
+  skip_struct(Buffer0);
 
 skip (Buffer0, list) ->
-  {Buffer1, EType, Size} = read_list_begin(Buffer0),
-  Buffer2 = foldn(fun (BufferL0) ->
-                      {BufferL1, _} = decode(BufferL0, EType),
-                      BufferL1
-                  end, Buffer1, Size),
-  read_list_end(Buffer2);
+  {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
+  foldn(fun (BufferL0) ->
+            {BufferL1, _} = decode(BufferL0, EType),
+            BufferL1
+        end, Buffer1, Size);
 
 skip (Buffer0, map) ->
   {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
-  Buffer2 = foldn(fun (BufferL0) ->
-                      {BufferL1, _} = decode(BufferL0, KType),
-                      {BufferL2, _} = decode(BufferL1, VType),
-                      BufferL2
-                  end, Buffer1, Size),
-  read_map_end(Buffer2);
+  foldn(fun (BufferL0) ->
+            {BufferL1, _} = decode(BufferL0, KType),
+            {BufferL2, _} = decode(BufferL1, VType),
+            BufferL2
+        end, Buffer1, Size);
 
 skip (Buffer0, set) ->
-  {Buffer1, EType, Size} = read_set_begin(Buffer0),
-  Buffer2 = foldn(fun (BufferL0) ->
-                      {BufferL1, _} = decode(BufferL0, EType),
-                      BufferL1
-                  end, Buffer1, Size),
-  read_set_end(Buffer2);
+  {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
+  foldn(fun (BufferL0) ->
+            {BufferL1, _} = decode(BufferL0, EType),
+            BufferL1
+        end, Buffer1, Size);
 
 skip (Buffer0, Type) when is_atom(Type) ->
   %% Skip the basic types.
@@ -426,8 +390,7 @@ skip_struct (Buffer0) ->
       Buffer1;
     _ ->
       Buffer2 = skip(Buffer1, Type),
-      Buffer3 = read_field_end(Buffer2),
-      skip_struct(Buffer3)
+      skip_struct(Buffer2)
   end.
 
 
