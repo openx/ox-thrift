@@ -194,18 +194,25 @@ encode (Type, Data) ->
 
 -spec encode_struct(FieldData::list({integer(), atom()}), Record::tuple(), I::integer(), LastId::integer()) -> IOData::iodata().
 encode_struct ([ {FieldId, Type} | FieldRest ], Record, I, LastId) ->
-  %% We could use tail recursion to make this a little more efficient, because
-  %% the field order shouldn't matter. @@
   case element(I, Record) of
     undefined ->
       %% null fields are skipped
       encode_struct(FieldRest, Record, I+1, LastId);
     Data ->
       FieldTypeId = term_to_typeid(Type),
-      [ write_field_begin(FieldTypeId, FieldId, LastId)
-      , encode(Type, Data)
-      | encode_struct(FieldRest, Record, I+1, FieldId)
-      ]
+      if ?THRIFT_PROTOCOL =:= compact andalso FieldTypeId =:= bool ->
+          %% This is a hack for compact, which encodes the value of a bool in
+          %% the type.
+          [ write_field_begin(Data, FieldId, LastId)
+            %% Bool value is encoded in type, so skip `encode' call.
+          | encode_struct(FieldRest, Record, I+1, FieldId)
+          ];
+         true ->
+          [ write_field_begin(FieldTypeId, FieldId, LastId)
+          , encode(Type, Data)
+          | encode_struct(FieldRest, Record, I+1, FieldId)
+          ]
+      end
   end;
 
 encode_struct ([], _Record, _I, _LastId) ->
@@ -278,8 +285,12 @@ decode (Buffer0, _T={list, Type}) ->
 
 decode (Buffer0, _T={map, KeyType, ValType}) ->
   {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
-  ?VALIDATE_TYPE(KeyType, KType, [ Buffer0, _T ]),
-  ?VALIDATE_TYPE(ValType, VType, [ Buffer0, _T ]),
+  if ?THRIFT_PROTOCOL =/= compact orelse Size =/= 0 ->
+      %% Types are not sent on wire for compact if size is 0.
+      ?VALIDATE_TYPE(KeyType, KType, [ Buffer0, _T ]),
+      ?VALIDATE_TYPE(ValType, VType, [ Buffer0, _T ]);
+     true -> ok
+  end,
   {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, [], Size),
   {Buffer2, dict:from_list(List)};
 
@@ -315,12 +326,22 @@ decode_struct (Buffer0, FieldList, Acc, LastId) ->
     _ ->
       case keyfind(FieldList, FieldId, 2) of %% inefficient @@
         {FieldTypeAtom, N} ->
-          ?VALIDATE_TYPE(FieldTypeAtom, FieldType, [ Buffer0, FieldList, Acc ]),
-          {Buffer2, Val} = decode(Buffer1, FieldTypeAtom),
+          {Buffer2, Val} =
+            if ?THRIFT_PROTOCOL =:= compact andalso is_boolean(FieldType) ->
+                ?VALIDATE_TYPE(FieldTypeAtom, bool, [ Buffer0, FieldList, Acc, LastId ]),
+                {Buffer1, FieldType};
+               true ->
+                ?VALIDATE_TYPE(FieldTypeAtom, FieldType, [ Buffer0, FieldList, Acc, LastId ]),
+                decode(Buffer1, FieldTypeAtom)
+            end,
           decode_struct(Buffer2, FieldList, [ {N, Val} | Acc ], FieldId);
         false ->
           %% io:format("field ~p not found in ~p\n", [ FieldId, FieldList ]),
-          Buffer2 = skip(Buffer1, FieldType),
+          Buffer2 = if ?THRIFT_PROTOCOL =:= compact andalso is_boolean(FieldType) ->
+                        Buffer1; %% Nothing to skip.
+                       true ->
+                        skip(Buffer1, FieldType)
+                    end,
           decode_struct(Buffer2, FieldList, Acc, FieldId)
       end
   end.
@@ -384,12 +405,17 @@ skip (Buffer0, Type) when is_atom(Type) ->
 
 -spec skip_struct (Buffer0::binary(), LastId::integer()) -> Buffer1::binary().
 skip_struct (Buffer0, LastId) ->
-  {Buffer1, Type, FieldId} = read_field_begin(Buffer0, LastId),
-  case Type of
+  {Buffer1, FieldType, FieldId} = read_field_begin(Buffer0, LastId),
+  case FieldType of
     field_stop ->
       Buffer1;
     _ ->
-      Buffer2 = skip(Buffer1, Type),
+      Buffer2 =
+        if ?THRIFT_PROTOCOL =:= compact andalso is_boolean(FieldType) ->
+            Buffer1; %% Nothing to skip.
+           true ->
+            skip(Buffer1, FieldType)
+        end,
       skip_struct(Buffer2, FieldId)
   end.
 

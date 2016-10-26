@@ -1,7 +1,13 @@
 %% Copyright 2016, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
--module(ox_thrift_protocol_binary).
+-module(ox_thrift_protocol_compact).
+
+%% For a description of the compact protocol, see
+%% https://erikvanoosten.github.io/thrift-missing-specification/.
+
+%% For a description of the zigzag and base 128 integer encoding for protobuf,
+%% see https://developers.google.com/protocol-buffers/docs/encoding.
 
 -include("ox_thrift_internal.hrl").
 
@@ -9,60 +15,79 @@
 
 -export([ encode_record/2, decode_record/2 ]).
 
+-define(THRIFT_PROTOCOL, compact).
 -include("ox_thrift_protocol.hrl").
 
 -compile({inline, [ write_message_begin/3
-                  , write_field_begin/2
+                  , write_field_begin/3
                   , write_field_stop/0
                   , write_map_begin/3
                   , write_list_or_set_begin/2
                   , write/2
+                  , write_varint/1
                   , read_message_begin/1
-                  , read_field_begin/1
+                  , read_field_begin/2
                   , read_map_begin/1
                   , read_list_or_set_begin/1
-                  , read/2 ]}).
+                  , read/2
+                  , read_varint/1
+                  , encode_zigzag/1
+                  , decode_zigzag/1
+                  ]}).
 %% -compile(inline_list_funcs).
 
--define(TYPE_BIN_STOP, 0).
--define(TYPE_BIN_VOID, 1).
--define(TYPE_BIN_BOOL, 2).
--define(TYPE_BIN_BYTE, 3).
--define(TYPE_BIN_DOUBLE, 4).
--define(TYPE_BIN_I16, 6).
--define(TYPE_BIN_I32, 8).
--define(TYPE_BIN_I64, 10).
--define(TYPE_BIN_STRING, 11).
--define(TYPE_BIN_STRUCT, 12).
--define(TYPE_BIN_MAP, 13).
--define(TYPE_BIN_SET, 14).
--define(TYPE_BIN_LIST, 15).
+-define(TYPE_STRUCT_FIELD_STOP, 0).
+-define(TYPE_STRUCT_FIELD_TRUE, 1).
+-define(TYPE_STRUCT_FIELD_FALSE, 2).
+-define(TYPE_STRUCT_FIELD_BYTE, 3).
+-define(TYPE_STRUCT_FIELD_I16, 4).
+-define(TYPE_STRUCT_FIELD_I32, 5).
+-define(TYPE_STRUCT_FIELD_I64, 6).
+-define(TYPE_STRUCT_FIELD_DOUBLE, 7).
+-define(TYPE_STRUCT_FIELD_STRING, 8).
+-define(TYPE_STRUCT_FIELD_LIST, 9).
+-define(TYPE_STRUCT_FIELD_SET, 10).
+-define(TYPE_STRUCT_FIELD_MAP, 11).
+-define(TYPE_STRUCT_FIELD_STRUCT, 12).
 
-%% term_to_wire(field_stop)     -> ?TYPE_BIN_STOP;
-term_to_wire(bool)              -> ?TYPE_BIN_BOOL;
-term_to_wire(byte)              -> ?TYPE_BIN_BYTE;
-term_to_wire(double)            -> ?TYPE_BIN_DOUBLE;
-term_to_wire(i16)               -> ?TYPE_BIN_I16;
-term_to_wire(i32)               -> ?TYPE_BIN_I32;
-term_to_wire(i64)               -> ?TYPE_BIN_I64;
-term_to_wire(string)            -> ?TYPE_BIN_STRING;
-term_to_wire(struct)            -> ?TYPE_BIN_STRUCT;
-term_to_wire(map)               -> ?TYPE_BIN_MAP;
-term_to_wire(set)               -> ?TYPE_BIN_SET;
-term_to_wire(list)              -> ?TYPE_BIN_LIST.
+term_to_wire_struct(bool)       -> ?TYPE_STRUCT_FIELD_TRUE; % list/set/map
+term_to_wire_struct(true)       -> ?TYPE_STRUCT_FIELD_TRUE; % struct field
+term_to_wire_struct(false)      -> ?TYPE_STRUCT_FIELD_FALSE;
+term_to_wire_struct(byte)       -> ?TYPE_STRUCT_FIELD_BYTE;
+term_to_wire_struct(double)     -> ?TYPE_STRUCT_FIELD_DOUBLE;
+term_to_wire_struct(i16)        -> ?TYPE_STRUCT_FIELD_I16;
+term_to_wire_struct(i32)        -> ?TYPE_STRUCT_FIELD_I32;
+term_to_wire_struct(i64)        -> ?TYPE_STRUCT_FIELD_I64;
+term_to_wire_struct(string)     -> ?TYPE_STRUCT_FIELD_STRING;
+term_to_wire_struct(struct)     -> ?TYPE_STRUCT_FIELD_STRUCT;
+term_to_wire_struct(map)        -> ?TYPE_STRUCT_FIELD_MAP;
+term_to_wire_struct(set)        -> ?TYPE_STRUCT_FIELD_SET;
+term_to_wire_struct(list)       -> ?TYPE_STRUCT_FIELD_LIST.
 
-%% wire_to_term(?TYPE_BIN_STOP) -> field_stop;
-wire_to_term(?TYPE_BIN_BOOL)    -> bool;
-wire_to_term(?TYPE_BIN_BYTE)    -> byte;
-wire_to_term(?TYPE_BIN_DOUBLE)  -> double;
-wire_to_term(?TYPE_BIN_I16)     -> i16;
-wire_to_term(?TYPE_BIN_I32)     -> i32;
-wire_to_term(?TYPE_BIN_I64)     -> i64;
-wire_to_term(?TYPE_BIN_STRING)  -> string;
-wire_to_term(?TYPE_BIN_STRUCT)  -> struct;
-wire_to_term(?TYPE_BIN_MAP)     -> map;
-wire_to_term(?TYPE_BIN_SET)     -> set;
-wire_to_term(?TYPE_BIN_LIST)    -> list.
+wire_to_term_struct(?TYPE_STRUCT_FIELD_TRUE)    -> true;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_FALSE)   -> false;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_BYTE)    -> byte;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_DOUBLE)  -> double;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_I16)     -> i16;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_I32)     -> i32;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_I64)     -> i64;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_STRING)  -> string;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_STRUCT)  -> struct;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_MAP)     -> map;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_SET)     -> set;
+wire_to_term_struct(?TYPE_STRUCT_FIELD_LIST)    -> list.
+
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_TRUE)    -> bool;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_BYTE)    -> byte;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_DOUBLE)  -> double;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_I16)     -> i16;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_I32)     -> i32;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_I64)     -> i64;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_STRING)  -> string;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_STRUCT)  -> struct;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_MAP)     -> map;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_SET)     -> set;
+wire_to_term_lsm(?TYPE_STRUCT_FIELD_LIST)    -> list.
 
 %% -define(DEBUG_READ, true).
 
@@ -72,60 +97,74 @@ wire_to_term(?TYPE_BIN_LIST)    -> list.
 %% parses the data from a binary buffer and returns the parsed data and the
 %% remaining buffer.
 
--define(VERSION_0, <<0, 0>>).
--define(VERSION_1, <<16#80, 16#01>>).
+-define(COMPACT_BINARY_HEADER, 16#82).
+-define(COMPACT_BINARY_VERSION, 1).
 
 write_message_begin (Name, Type, SeqId) ->
   %% Write a version 1 message header.
-  NameLen = size(Name),
-  <<?VERSION_1/binary, 0, Type, NameLen:32/big-signed, Name/binary, SeqId:32/big-signed>>.
+  TypeAndVersion = Type * 32 + ?COMPACT_BINARY_VERSION,
+  [ ?COMPACT_BINARY_HEADER, TypeAndVersion, write_varint(SeqId), write(string, Name) ].
 
-write_field_begin (Type, Id) ->
-  TypeWire = term_to_wire(Type),
-  <<TypeWire:8/big-signed, Id:16/big-signed>>.
+write_field_begin (Type, Id, LastId) ->
+  DeltaId = Id - LastId,
+  TypeWire = term_to_wire_struct(Type),
+  if DeltaId > 0 andalso DeltaId < 16 -> [ DeltaId * 16 + TypeWire ];
+     true                             -> [ TypeWire | write_varint(encode_zigzag(Id)) ]
+  end.
 
 write_field_stop () ->
-  ?TYPE_BIN_STOP.
+  ?TYPE_STRUCT_FIELD_STOP.
 
 write_map_begin (KType, VType, Size) ->
-  KTypeWire = term_to_wire(KType),
-  VTypeWire = term_to_wire(VType),
-  <<KTypeWire:8/big-signed, VTypeWire:8/big-signed, Size:32/big-signed>>.
+  case Size of
+    0 -> [ 0 ];
+    _ -> KTypeWire = term_to_wire_struct(KType),
+         VTypeWire = term_to_wire_struct(VType),
+         [ write_varint(Size), KTypeWire * 16 + VTypeWire ]
+  end.
 
 write_list_or_set_begin (EType, Size) ->
-  ETypeWire = term_to_wire(EType),
-  <<ETypeWire:8/big-signed, Size:32/big-signed>>.
+  ETypeWire = term_to_wire_struct(EType),
+  if Size < 15 -> [ Size * 16 + ETypeWire ];
+     true      -> [ 16#F0 + ETypeWire | write_varint(Size) ]
+  end.
 
 
 write (bool, true) ->
-  1;
+  2;
 
 write (bool, false) ->
   0;
 
 write (byte, Byte) ->
-  <<Byte:8/big-signed>>;
+  <<Byte:8/signed>>;
 
 write (i16, I16) ->
-  <<I16:16/big-signed>>;
+  write_varint(encode_zigzag(I16));
 
 write (i32, I32) ->
-  <<I32:32/big-signed>>;
+  write_varint(encode_zigzag(I32));
 
 write (i64, I64) ->
-  <<I64:64/big-signed>>;
+  write_varint(encode_zigzag(I64));
 
 write (double, Double) ->
-  <<Double:64/big-signed-float>>;
+  <<Double:64/float-signed-little>>;
 
 write (string, Str) when is_list(Str) ->
   Bin = list_to_binary(Str),
   BinLen = size(Bin),
-  [ <<BinLen:32/big-signed>>, Bin ];
+  [ write_varint(BinLen), Bin ];
 
 write (string, Bin) when is_binary(Bin) ->
   BinLen = size(Bin),
-  [ <<BinLen:32/big-signed>>, Bin ].
+  [ write_varint(BinLen), Bin ].
+
+
+write_varint (UnsignedInt) when UnsignedInt < 128 ->
+  [ UnsignedInt ];
+write_varint (UnsignedInt) ->
+  [ 128 + UnsignedInt rem 128 | write_varint(UnsignedInt div 128) ].
 
 
 -ifdef(DEBUG_READ).
@@ -142,75 +181,96 @@ read(DataIn, Type) ->
 
 -spec read_message_begin(IData::binary()) -> {OData::binary(), Name::binary(), Type::integer(), SeqId::integer()}.
 read_message_begin (Data0) ->
-  Version = binary_part(Data0, {0, 2}),
-  case Version of
-    ?VERSION_1 ->
-      <<_:3/binary, Type, NameSize:32/big-signed, Name:NameSize/binary, SeqId:32/big-signed, Data1/binary>> = Data0,
-      {Data1, Name, Type, SeqId};
-    ?VERSION_0 ->
-      %% No version header; read the old way.
-      <<_:2/binary, NameSize:16/big-signed, Name:NameSize/binary, Type, SeqId:32/big-signed, Data1/binary>> = Data0,
-      {Data1, Name, Type, SeqId};
+  case Data0 of
+    <<?COMPACT_BINARY_HEADER, Type:3, ?COMPACT_BINARY_VERSION:5, Data1/binary>> ->
+      {Data2, SeqId} = read_varint(Data1),
+      {Data3, Name} = read(Data2, string),
+      {Data3, Name, Type, SeqId};
     _  ->
-      %% Unexpected version number.
-      error({bad_binary_protocol_version, Version})
+      %% Unexpected header or version number.
+      error({bad_header, binary_part(Data0, {0, 2})})
   end.
 
--spec read_field_begin (IData::binary()) -> {OData::binary(), Type::proto_type(), Id::integer()}
-                                          | {OData::binary(), field_stop, 'undefined'}.
-read_field_begin (Data0) ->
+-spec read_field_begin (IData::binary(), LastId::integer())
+                       -> {OData::binary(), Type::proto_type(), Id::integer()}
+                        | {OData::binary(), field_stop, 'undefined'}.
+read_field_begin (Data0, LastId) ->
   case Data0 of
-    <<?TYPE_BIN_STOP:8/big-signed, Data1/binary>>  ->
+    <<?TYPE_STRUCT_FIELD_STOP:8, Data1/binary>> ->
       {Data1, field_stop, undefined};
-    <<Type:8/big-signed, Id:16/big-signed, Data1/binary>> ->
-      {Data1, wire_to_term(Type), Id}
+    <<DeltaId:4, Type:4, Data1/binary>> ->
+      if DeltaId =:= 0 ->
+          {Data2, IdZ} = read_varint(Data1),
+          {Data2, wire_to_term_struct(Type), decode_zigzag(IdZ)};
+         true ->
+          {Data1, wire_to_term_struct(Type), DeltaId + LastId}
+      end
   end.
 
 %% This isn't necessary, since we never explicitly read a `field_stop', we
 %% just find it when trying to read a `field_begin'.
 %%
 %% ?READ (field_stop, Data0) ->
-%%   {?TYPE_BIN_STOP, Data1} = read(?TYPE_BIN_BYTE, Data0),
+%%   {?tType_STOP, Data1} = read(?tType_BYTE, Data0),
 %%   {ok, Data1};
 
--spec read_map_begin(IData::binary()) -> {OData::binary(), KType::proto_type(), VType::proto_type(), Size::integer()}.
+-spec read_map_begin(IData::binary())
+                    -> {OData::binary(), 'undefined', 'undefined', 0}
+                     | {OData::binary(), KType::proto_type(), VType::proto_type(), Size::pos_integer()}.
 read_map_begin (Data0) ->
-  <<KType:8/big-signed, VType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {Data1, wire_to_term(KType), wire_to_term(VType), Size}.
+  {Data1, Size} = read_varint(Data0),
+  if Size =:= 0 -> {Data1, undefined, undefined, Size};
+     true       -> <<KType:4, VType:4, Data2/binary>> = Data1,
+                   {Data2, wire_to_term_lsm(KType), wire_to_term_lsm(VType), Size}
+  end.
 
 -spec read_list_or_set_begin(IData::binary()) -> {OData::binary(), EType::proto_type(), Size::integer()}.
 read_list_or_set_begin (Data0) ->
-  <<EType:8/big-signed, Size:32/big-signed, Data1/binary>> = Data0,
-  {Data1, wire_to_term(EType), Size}.
+  <<CompactSize:4, EType:4, Data1/binary>> = Data0,
+  case CompactSize of
+    16#F -> {Data2, Size} = read_varint(Data1),
+            {Data2, wire_to_term_lsm(EType), Size};
+    _    -> {Data1, wire_to_term_lsm(EType), CompactSize}
+  end.
 
 
 ?READ (Data0, bool) ->
-  <<Bool:8/big-signed, Data1/binary>> = Data0,
+  <<Bool:8, Data1/binary>> = Data0,
   {Data1, Bool =/= 0};
 
 ?READ (Data0, byte) ->
-  <<Val:8/integer-signed-big, Data1/binary>> = Data0,
+  <<Val:8/signed, Data1/binary>> = Data0,
   {Data1, Val};
 
 ?READ (Data0, i16) ->
-  <<Val:16/integer-signed-big, Data1/binary>> = Data0,
-  {Data1, Val};
+  {Data1, Z} = read_varint(Data0),
+  {Data1, decode_zigzag(Z)};
 
 ?READ (Data0, i32) ->
-  <<Val:32/integer-signed-big, Data1/binary>> = Data0,
-  {Data1, Val};
+  {Data1, Z} = read_varint(Data0),
+  {Data1, decode_zigzag(Z)};
 
 ?READ (Data0, i64) ->
-  <<Val:64/integer-signed-big, Data1/binary>> = Data0,
-  {Data1, Val};
+  {Data1, Z} = read_varint(Data0),
+  {Data1, decode_zigzag(Z)};
 
 ?READ (Data0, double) ->
-  <<Val:64/float-signed-big, Data1/binary>> = Data0,
+  <<Val:64/float-signed-little, Data1/binary>> = Data0,
   {Data1, Val};
 
 ?READ (Data0, string) ->
-  <<Size:32/big-signed, String:Size/binary, Data1/binary>> = Data0,
-  {Data1, String}.
+  {Data1, Size} = read_varint(Data0),
+  <<String:Size/binary, Data2/binary>> = Data1,
+  {Data2, String}.
+
+
+read_varint (Data) -> read_varint(Data, 0, 1).
+
+read_varint (Data0, Acc, Multiplier) ->
+  <<Val:8/integer-unsigned, Data1/binary>> = Data0,
+  if Val < 128 -> {Data1, Val * Multiplier + Acc};
+     true      -> read_varint(Data1, (Val - 128) * Multiplier + Acc, Multiplier * 128)
+  end.
 
 
 %% -spec read_data(DataIn::binary(), Size::non_neg_integer()) -> {DataOut::binary(), Value::binary()}.
@@ -221,6 +281,19 @@ read_list_or_set_begin (Data0) ->
 %%          {Data1, Val}
 %%   end.
 
+
+encode_zigzag (SignedInt) ->
+  if SignedInt >= 0 -> SignedInt * 2;
+     true           -> -SignedInt * 2 - 1
+    end.
+
+
+decode_zigzag (ZigZagInt) ->
+  if ZigZagInt rem 2 =:= 1 -> - (ZigZagInt + 1) div 2;
+     true                  -> ZigZagInt div 2
+  end.
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -ifdef(TEST).
@@ -228,6 +301,54 @@ read_list_or_set_begin (Data0) ->
 -endif.
 
 -ifdef(EUNIT).
+
+write_varint_test () ->
+  ?assertEqual(<<0>>, iolist_to_binary(write_varint(0))),
+  ?assertEqual(<<1>>, iolist_to_binary(write_varint(1))),
+  ?assertEqual(<<127>>, iolist_to_binary(write_varint(127))),
+  ?assertEqual(<<128, 1>>, iolist_to_binary(write_varint(128))),
+  ?assertEqual(<<185, 96>>, iolist_to_binary(write_varint(12345))),
+  ?assertEqual(<<135, 173, 75>>, iolist_to_binary(write_varint(1234567))),
+  ?assertEqual(<<255, 127>>, iolist_to_binary(write_varint(16383))),
+  ?assertEqual(<<128, 128, 1>>, iolist_to_binary(write_varint(16384))),
+  ?assertEqual(<<255, 255, 127>>, iolist_to_binary(write_varint(2097151))),
+  ?assertEqual(<<255, 255, 255, 127>>, iolist_to_binary(write_varint(268435455))).
+
+read_varint_test () ->
+  ?assertEqual({<<>>, 0}, read_varint(<<0>>)),
+  ?assertEqual({<<>>, 1}, read_varint(<<1>>)),
+  ?assertEqual({<<>>, 127}, read_varint(<<127>>)),
+  ?assertEqual({<<>>, 128}, read_varint(<<128, 1>>)).
+
+
+varint_roundtrip_test () ->
+  lists:map(
+    fun (I) -> ?assertMatch({{<<>>, I}, _, I},
+                            begin
+                              B = iolist_to_binary(write_varint(I)),
+                              {read_varint(B), B, I}
+                            end) end,
+    [ 0, 1, 9, 10, 99, 100, 9999, 16#10001000, 16#FFFFFFFF, 16#FEDCBA9876543210 ]).
+
+
+encode_zigzag_test () ->
+  ?assertEqual(0, encode_zigzag(0)),
+  ?assertEqual(2, encode_zigzag(1)),
+  ?assertEqual(1, encode_zigzag(-1)),
+  ?assertEqual(254, encode_zigzag(127)),
+  ?assertEqual(255, encode_zigzag(-128)),
+  ?assertEqual(4294967294, encode_zigzag(2147483647)),
+  ?assertEqual(4294967295, encode_zigzag(-2147483648)).
+
+zigzag_roundtrip_test () ->
+  lists:map(
+    fun (I) -> ?assertMatch({I, _, I},
+                            begin
+                              Z = encode_zigzag(I),
+                              {decode_zigzag(Z), Z, I}
+                            end) end,
+    [ 0, 1, 2, 3, -1, -2, -3, 100, -100, 999, -999, 16#7FF0, 99999999, -99999999 ]).
+
 
 message_test () ->
   Name = <<"test">>,
@@ -237,30 +358,38 @@ message_test () ->
   ?assertEqual({<<>>, Name, Type, SeqId},
                read_message_begin(iolist_to_binary(write_message_begin(Name, Type, SeqId)))),
 
-  %% New-style message header.
+  SeqIdEnc = iolist_to_binary(write_varint(SeqId)),
   ?assertEqual({<<>>, Name, Type, SeqId},
-               read_message_begin(<<?VERSION_1/binary, 0, Type, NameLen:32/big, Name/binary, SeqId:32/big>>)),
-
-  %% Old-style message header.
-  ?assertEqual({<<>>, Name, Type, SeqId},
-               read_message_begin(<<NameLen:32/big, Name/binary, Type, SeqId:32/big>>)).
+               read_message_begin(<<?COMPACT_BINARY_HEADER, Type:3, ?COMPACT_BINARY_VERSION:5, SeqIdEnc/binary, NameLen, Name/binary>>)).
 
 field_test () ->
+  ?assertEqual(<<17>>, iolist_to_binary(write_field_begin(true, 1, 0))),
+  ?assertEqual(<<18>>, iolist_to_binary(write_field_begin(false, 1, 0))),
+  ?assertEqual(<<1, 2>>, iolist_to_binary(write_field_begin(true, 1, 99))),
+  ?assertEqual(<<2, 2>>, iolist_to_binary(write_field_begin(false, 1, 99))),
+  ?assertEqual(<<16#25>>, iolist_to_binary(write_field_begin(i32, 32, 30))),
+  ?assertEqual(<<16#05, 64>>, iolist_to_binary(write_field_begin(i32, 32, 0))),
+
   Type = i32,
   Id = 16#7FF0,
   %% Name is not sent in binary protocol.
-  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id)))).
+  ?assertEqual({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id, 0)), 0)),
+  ?assertEqual({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id, Id - 5)), Id - 5)).
 
 map_test () ->
   KType = byte,
   VType = string,
-  Size = 16#7FFFFFF1,
-  ?assertEqual({<<>>, KType, VType, Size}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size)))).
+  Size0 = 16#7FFFFFF1, %% Normal map header.
+  ?assertEqual({<<>>, KType, VType, Size0}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size0)))),
+  Size1 = 0, %% Empty map header.
+  ?assertEqual({<<>>, undefined, undefined, Size1}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size1)))).
 
 list_or_set_test () ->
-  EType = byte,
-  Size = 16#7FFFFFF2,
-  ?assertEqual({<<>>, EType, Size}, read_list_or_set_begin(iolist_to_binary(write_list_or_set_begin(EType, Size)))).
+  EType = byte, %% Large set header.
+  Size0 = 16#7FFFFFF2,
+  ?assertEqual({<<>>, EType, Size0}, read_list_or_set_begin(iolist_to_binary(write_list_or_set_begin(EType, Size0)))),
+  Size1 = 14, %% Compact set header.
+  ?assertEqual({<<>>, EType, Size1}, read_list_or_set_begin(iolist_to_binary(write_list_or_set_begin(EType, Size1)))).
 
 basic_test () ->
   B = 16#7F,

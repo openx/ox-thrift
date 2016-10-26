@@ -9,6 +9,7 @@
 
 -export([ encode_record/2, decode_record/2 ]).
 
+-define(THRIFT_PROTOCOL, binary).
 -include("ox_thrift_protocol.hrl").
 
 -compile({inline, [ write_message_begin/3
@@ -24,45 +25,49 @@
                   , read/2 ]}).
 %% -compile(inline_list_funcs).
 
--define(TYPE_BIN_STOP, 0).
--define(TYPE_BIN_VOID, 1).
--define(TYPE_BIN_BOOL, 2).
--define(TYPE_BIN_BYTE, 3).
--define(TYPE_BIN_DOUBLE, 4).
--define(TYPE_BIN_I16, 6).
--define(TYPE_BIN_I32, 8).
--define(TYPE_BIN_I64, 10).
--define(TYPE_BIN_STRING, 11).
--define(TYPE_BIN_STRUCT, 12).
--define(TYPE_BIN_MAP, 13).
--define(TYPE_BIN_SET, 14).
--define(TYPE_BIN_LIST, 15).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% term_to_wire(field_stop)     -> ?TYPE_BIN_STOP;
-term_to_wire(bool)              -> ?TYPE_BIN_BOOL;
-term_to_wire(byte)              -> ?TYPE_BIN_BYTE;
-term_to_wire(double)            -> ?TYPE_BIN_DOUBLE;
-term_to_wire(i16)               -> ?TYPE_BIN_I16;
-term_to_wire(i32)               -> ?TYPE_BIN_I32;
-term_to_wire(i64)               -> ?TYPE_BIN_I64;
-term_to_wire(string)            -> ?TYPE_BIN_STRING;
-term_to_wire(struct)            -> ?TYPE_BIN_STRUCT;
-term_to_wire(map)               -> ?TYPE_BIN_MAP;
-term_to_wire(set)               -> ?TYPE_BIN_SET;
-term_to_wire(list)              -> ?TYPE_BIN_LIST.
+-define(TYPE_STOP, 0).
+-define(TYPE_VOID, 1).
+-define(TYPE_BOOL, 2).
+-define(TYPE_BYTE, 3).
+-define(TYPE_DOUBLE, 4).
+-define(TYPE_I16, 6).
+-define(TYPE_I32, 8).
+-define(TYPE_I64, 10).
+-define(TYPE_STRING, 11).
+-define(TYPE_STRUCT, 12).
+-define(TYPE_MAP, 13).
+-define(TYPE_SET, 14).
+-define(TYPE_LIST, 15).
 
-%% wire_to_term(?TYPE_BIN_STOP) -> field_stop;
-wire_to_term(?TYPE_BIN_BOOL)    -> bool;
-wire_to_term(?TYPE_BIN_BYTE)    -> byte;
-wire_to_term(?TYPE_BIN_DOUBLE)  -> double;
-wire_to_term(?TYPE_BIN_I16)     -> i16;
-wire_to_term(?TYPE_BIN_I32)     -> i32;
-wire_to_term(?TYPE_BIN_I64)     -> i64;
-wire_to_term(?TYPE_BIN_STRING)  -> string;
-wire_to_term(?TYPE_BIN_STRUCT)  -> struct;
-wire_to_term(?TYPE_BIN_MAP)     -> map;
-wire_to_term(?TYPE_BIN_SET)     -> set;
-wire_to_term(?TYPE_BIN_LIST)    -> list.
+%% term_to_wire(field_stop)     -> ?TYPE_STOP;
+term_to_wire(bool)              -> ?TYPE_BOOL;
+term_to_wire(byte)              -> ?TYPE_BYTE;
+term_to_wire(double)            -> ?TYPE_DOUBLE;
+term_to_wire(i16)               -> ?TYPE_I16;
+term_to_wire(i32)               -> ?TYPE_I32;
+term_to_wire(i64)               -> ?TYPE_I64;
+term_to_wire(string)            -> ?TYPE_STRING;
+term_to_wire(struct)            -> ?TYPE_STRUCT;
+term_to_wire(map)               -> ?TYPE_MAP;
+term_to_wire(set)               -> ?TYPE_SET;
+term_to_wire(list)              -> ?TYPE_LIST.
+
+%% wire_to_term(?TYPE_STOP) -> field_stop;
+wire_to_term(?TYPE_BOOL)        -> bool;
+wire_to_term(?TYPE_BYTE)        -> byte;
+wire_to_term(?TYPE_DOUBLE)      -> double;
+wire_to_term(?TYPE_I16)         -> i16;
+wire_to_term(?TYPE_I32)         -> i32;
+wire_to_term(?TYPE_I64)         -> i64;
+wire_to_term(?TYPE_STRING)      -> string;
+wire_to_term(?TYPE_STRUCT)      -> struct;
+wire_to_term(?TYPE_MAP)         -> map;
+wire_to_term(?TYPE_SET)         -> set;
+wire_to_term(?TYPE_LIST)        -> list.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% -define(DEBUG_READ, true).
 
@@ -85,7 +90,7 @@ write_field_begin (Type, Id, _LastId) ->
   <<TypeWire:8/big-signed, Id:16/big-signed>>.
 
 write_field_stop () ->
-  ?TYPE_BIN_STOP.
+  ?TYPE_STOP.
 
 write_map_begin (KType, VType, Size) ->
   KTypeWire = term_to_wire(KType),
@@ -161,7 +166,7 @@ read_message_begin (Data0) ->
                         | {OData::binary(), field_stop, 'undefined'}.
 read_field_begin (Data0, _LastId) ->
   case Data0 of
-    <<?TYPE_BIN_STOP:8/big-signed, Data1/binary>>  ->
+    <<?TYPE_STOP:8/big-signed, Data1/binary>>  ->
       {Data1, field_stop, undefined};
     <<Type:8/big-signed, Id:16/big-signed, Data1/binary>> ->
       {Data1, wire_to_term(Type), Id}
@@ -171,7 +176,7 @@ read_field_begin (Data0, _LastId) ->
 %% just find it when trying to read a `field_begin'.
 %%
 %% ?READ (field_stop, Data0) ->
-%%   {?TYPE_BIN_STOP, Data1} = read(?TYPE_BIN_BYTE, Data0),
+%%   {?TYPE_STOP, Data1} = read(?TYPE_BIN_BYTE, Data0),
 %%   {ok, Data1};
 
 -spec read_map_begin(IData::binary()) -> {OData::binary(), KType::proto_type(), VType::proto_type(), Size::integer()}.

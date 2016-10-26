@@ -14,7 +14,7 @@
 -export([ sum_ints/2, echo/1, throw_exception/1 ]). % Export so that compiler doesn't complain about unused function.
 
 -define(SERVICE, test_service_thrift).
--define(PROTOCOL, ox_thrift_protocol_binary).
+-define(PROTOCOL, ox_thrift_protocol_compact_binary).
 -define(HANDLER, ?MODULE).
 -define(STATS_MODULE, ?MODULE).
 -define(STATS_TABLE, ox_thrift_stats).

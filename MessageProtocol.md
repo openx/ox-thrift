@@ -1,8 +1,11 @@
 <!-- -*- mode:gfm; word-wrap:nil -*- github-flavored markdown -->
 
 The official Thrift documentation is a little unclear on the message
-formats involved in RPCs.  This document describes my discoveries from
-reading the code.
+formats involved in RPCs.  I recently discovered
+some
+[fantastic documentation by Erik van Oosten](https://erikvanoosten.github.io/thrift-missing-specification/) which
+makes this document somewhat redundant, but this describes my
+discoveries from reading the code.
 
 # Function Calls
 
@@ -141,3 +144,21 @@ MessageBegin(name="myfun", type=exception, seqid=0)
 MessageEnd()
 ```
 
+# Type IDs
+
+| Type   | Binary ID  | Compact ID Struct  | Compact ID Other  |
+|--------|-----------:|--------------:|-------------:|
+| stop   |  0         |  0            |  0           |
+| bool   |  2         |  -            |  2           |
+| true   |  -         |  1            |  -           |
+| false  |  -         |  2            |  -           |
+| byte   |  3         |  3            |  3           |
+| double |  4         |  7            |  4           |
+| i16    |  6         |  4            |  6           |
+| i32    |  8         |  5            |  8           |
+| i64    | 10         |  6            | 10           |
+| string | 11         |  8            | 11           |
+| struct | 12         | 12            | 12           |
+| map    | 13         | 11            | 13           |
+| set    | 14         | 10            | 14           |
+| list   | 15         |  9            | 15           |
