@@ -12,13 +12,13 @@
 -include("ox_thrift_protocol.hrl").
 
 -compile({inline, [ write_message_begin/3
-                  , write_field_begin/2
+                  , write_field_begin/3
                   , write_field_stop/0
                   , write_map_begin/3
                   , write_list_or_set_begin/2
                   , write/2
                   , read_message_begin/1
-                  , read_field_begin/1
+                  , read_field_begin/2
                   , read_map_begin/1
                   , read_list_or_set_begin/1
                   , read/2 ]}).
@@ -80,7 +80,7 @@ write_message_begin (Name, Type, SeqId) ->
   NameLen = size(Name),
   <<?VERSION_1/binary, 0, Type, NameLen:32/big-signed, Name/binary, SeqId:32/big-signed>>.
 
-write_field_begin (Type, Id) ->
+write_field_begin (Type, Id, _LastId) ->
   TypeWire = term_to_wire(Type),
   <<TypeWire:8/big-signed, Id:16/big-signed>>.
 
@@ -156,9 +156,10 @@ read_message_begin (Data0) ->
       error({bad_binary_protocol_version, Version})
   end.
 
--spec read_field_begin (IData::binary()) -> {OData::binary(), Type::proto_type(), Id::integer()}
-                                          | {OData::binary(), field_stop, 'undefined'}.
-read_field_begin (Data0) ->
+-spec read_field_begin (IData::binary(), LastId::integer())
+                       -> {OData::binary(), Type::proto_type(), Id::integer()}
+                        | {OData::binary(), field_stop, 'undefined'}.
+read_field_begin (Data0, _LastId) ->
   case Data0 of
     <<?TYPE_BIN_STOP:8/big-signed, Data1/binary>>  ->
       {Data1, field_stop, undefined};
@@ -249,7 +250,7 @@ field_test () ->
   Type = i32,
   Id = 16#7FF0,
   %% Name is not sent in binary protocol.
-  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id)))).
+  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id, 0)), 0)).
 
 map_test () ->
   KType = byte,

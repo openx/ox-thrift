@@ -134,7 +134,7 @@ encode_message (ServiceModule, Function, MessageType, SeqId, Args) ->
 encode ({struct, StructDef}, Data)
   when is_list(StructDef), is_tuple(Data), length(StructDef) == size(Data) - 1 ->
   %% Encode a record from a struct definition.
-  encode_struct(StructDef, Data, 2);
+  encode_struct(StructDef, Data, 2, 0);
 
 encode ({struct, {Schema, StructName}}, Data)
   when is_atom(Schema), is_atom(StructName), is_tuple(Data), element(1, Data) == StructName ->
@@ -192,23 +192,23 @@ encode (Type, Data) ->
   error({invalid_type, {type, Type}, {data, Data}}).
 
 
--spec encode_struct(FieldData::list({integer(), atom()}), Record::tuple(), I::integer()) -> IOData::iodata().
-encode_struct ([ {FieldId, Type} | FieldRest ], Record, I) ->
+-spec encode_struct(FieldData::list({integer(), atom()}), Record::tuple(), I::integer(), LastId::integer()) -> IOData::iodata().
+encode_struct ([ {FieldId, Type} | FieldRest ], Record, I, LastId) ->
   %% We could use tail recursion to make this a little more efficient, because
   %% the field order shouldn't matter. @@
   case element(I, Record) of
     undefined ->
       %% null fields are skipped
-      encode_struct(FieldRest, Record, I+1);
+      encode_struct(FieldRest, Record, I+1, LastId);
     Data ->
       FieldTypeId = term_to_typeid(Type),
-      [ write_field_begin(FieldTypeId, FieldId)
+      [ write_field_begin(FieldTypeId, FieldId, LastId)
       , encode(Type, Data)
-      | encode_struct(FieldRest, Record, I+1)
+      | encode_struct(FieldRest, Record, I+1, FieldId)
       ]
   end;
 
-encode_struct ([], _Record, _I) ->
+encode_struct ([], _Record, _I, _LastId) ->
   [ write_field_stop() ].
 
 
@@ -302,12 +302,12 @@ decode_record (Buffer0, Name, {struct, StructDef})
   %% here.  It might be better to wait until after the struct is parsed,
   %% however, to avoid unnecessarily creating initializers for fields that
   %% don't need them. @@
-  decode_struct(Buffer0, StructDef, [ {1, Name} ]).
+  decode_struct(Buffer0, StructDef, [ {1, Name} ], 0).
 
 
--spec decode_struct(BufferIn::binary(), FieldList::list(), Acc::list()) -> {binary(), tuple()}.
-decode_struct (Buffer0, FieldList, Acc) ->
-  {Buffer1, FieldType, FieldId} = read_field_begin(Buffer0),
+-spec decode_struct(BufferIn::binary(), FieldList::list(), Acc::list(), LastId::integer()) -> {binary(), tuple()}.
+decode_struct (Buffer0, FieldList, Acc, LastId) ->
+  {Buffer1, FieldType, FieldId} = read_field_begin(Buffer0, LastId),
   case FieldType of
     field_stop ->
       Record = erlang:make_tuple(length(FieldList)+1, undefined, Acc),
@@ -317,11 +317,11 @@ decode_struct (Buffer0, FieldList, Acc) ->
         {FieldTypeAtom, N} ->
           ?VALIDATE_TYPE(FieldTypeAtom, FieldType, [ Buffer0, FieldList, Acc ]),
           {Buffer2, Val} = decode(Buffer1, FieldTypeAtom),
-          decode_struct(Buffer2, FieldList, [ {N, Val} | Acc ]);
+          decode_struct(Buffer2, FieldList, [ {N, Val} | Acc ], FieldId);
         false ->
           %% io:format("field ~p not found in ~p\n", [ FieldId, FieldList ]),
           Buffer2 = skip(Buffer1, FieldType),
-          decode_struct(Buffer2, FieldList, Acc)
+          decode_struct(Buffer2, FieldList, Acc, FieldId)
       end
   end.
 
@@ -352,7 +352,7 @@ decode_set (Buffer0, EType, Acc, N) ->
 
 -spec skip(Buffer0::binary(), Type::atom()) -> Buffer1::binary().
 skip (Buffer0, struct) ->
-  skip_struct(Buffer0);
+  skip_struct(Buffer0, 0);
 
 skip (Buffer0, list) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
@@ -382,15 +382,15 @@ skip (Buffer0, Type) when is_atom(Type) ->
   Buffer.
 
 
--spec skip_struct (Buffer0::binary()) -> Buffer1::binary().
-skip_struct (Buffer0) ->
-  {Buffer1, Type, _} = read_field_begin(Buffer0),
+-spec skip_struct (Buffer0::binary(), LastId::integer()) -> Buffer1::binary().
+skip_struct (Buffer0, LastId) ->
+  {Buffer1, Type, FieldId} = read_field_begin(Buffer0, LastId),
   case Type of
     field_stop ->
       Buffer1;
     _ ->
       Buffer2 = skip(Buffer1, Type),
-      skip_struct(Buffer2)
+      skip_struct(Buffer2, FieldId)
   end.
 
 
