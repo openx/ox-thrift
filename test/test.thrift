@@ -9,6 +9,11 @@ struct AllTypes {
   8:  optional list<i32> int_list
   9:  optional set<string> string_set
   10: optional map<string,i32> string_int_map
+  11: optional list<bool> bool_list
+  12: optional list<byte> byte_list
+  13: optional list<double> double_list
+  14: optional list<string> string_list
+
 }
 
 struct Integers {
@@ -24,15 +29,18 @@ struct Container {
 }
 
 struct MissingFields {
-  1:  optional i32 first
-  3:  optional i32 second_skip                  // SKIP
-  5:  optional double third
-  7:  optional list<i32> fourth_skip            // SKIP
-  9:  optional string fifth
-  10:  optional AllTypes sixth_skip              // SKIP
+  1:   optional i32 first
+  3:   optional i32 second_skip                 // SKIP
+  5:   optional double third
+  7:   optional list<i32> fourth_skip           // SKIP
+  9:   optional string fifth
+  10:  optional AllTypes sixth_skip             // SKIP
   12:  optional bool seventh
-  14:  optional map<string,i32> eighth_skip      // SKIP
+  14:  optional map<string,i32> eighth_skip     // SKIP
   15:  optional byte ninth
+  100: optional bool tenth
+  200: optional byte eleventh_skip              // SKIP
+  16:  optional byte twelveth
 }
 
 exception SimpleException {

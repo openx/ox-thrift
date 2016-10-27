@@ -20,7 +20,11 @@ struct_info('AllTypes') ->
           {7, string},
           {8, {list, i32}},
           {9, {set, string}},
-          {10, {map, string, i32}}]}
+          {10, {map, string, i32}},
+          {11, {list, bool}},
+          {12, {list, byte}},
+          {13, {list, double}},
+          {14, {list, string}}]}
 ;
 
 struct_info('Integers') ->
@@ -40,7 +44,9 @@ struct_info('MissingFields') ->
           {5, double},
           {9, string},
           {12, bool},
-          {15, byte}]}
+          {15, byte},
+          {100, bool},
+          {16, byte}]}
 ;
 
 struct_info('SimpleException') ->
@@ -64,7 +70,11 @@ struct_info_ext('AllTypes') ->
           {7, optional, string, 'string_field', undefined},
           {8, optional, {list, i32}, 'int_list', []},
           {9, optional, {set, string}, 'string_set', sets:new()},
-          {10, optional, {map, string, i32}, 'string_int_map', dict:new()}]}
+          {10, optional, {map, string, i32}, 'string_int_map', dict:new()},
+          {11, optional, {list, bool}, 'bool_list', []},
+          {12, optional, {list, byte}, 'byte_list', []},
+          {13, optional, {list, double}, 'double_list', []},
+          {14, optional, {list, string}, 'string_list', []}]}
 ;
 
 struct_info_ext('Integers') ->
@@ -84,7 +94,9 @@ struct_info_ext('MissingFields') ->
           {5, optional, double, 'third', undefined},
           {9, optional, string, 'fifth', undefined},
           {12, optional, bool, 'seventh', undefined},
-          {15, optional, byte, 'ninth', undefined}]}
+          {15, optional, byte, 'ninth', undefined},
+          {100, optional, bool, 'tenth', undefined},
+          {16, optional, byte, 'twelveth', undefined}]}
 ;
 
 struct_info_ext('SimpleException') ->

@@ -22,7 +22,11 @@
                      'string_field' :: string() | binary(),
                      'int_list' :: list(),
                      'string_set' :: remote_set(),
-                     'string_int_map' :: remote_dict()}).
+                     'string_int_map' :: remote_dict(),
+                     'bool_list' :: list(),
+                     'byte_list' :: list(),
+                     'double_list' :: list(),
+                     'string_list' :: list()}).
 -type 'AllTypes'() :: #'AllTypes'{}.
 
 %% struct 'Integers'
@@ -49,7 +53,10 @@
                           'sixth_skip' :: 'AllTypes'(),
                           'seventh' :: boolean(),
                           'eighth_skip' :: remote_dict(),
-                          'ninth' :: integer()}).
+                          'ninth' :: integer(),
+                          'tenth' :: boolean(),
+                          'eleventh_skip' :: integer(),
+                          'twelveth' :: integer()}).
 -type 'MissingFields'() :: #'MissingFields'{}.
 
 %% struct 'SimpleException'

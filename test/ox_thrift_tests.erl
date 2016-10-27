@@ -14,16 +14,15 @@
 -export([ sum_ints/2, echo/1, throw_exception/1 ]). % Export so that compiler doesn't complain about unused function.
 
 -define(SERVICE, test_service_thrift).
--define(PROTOCOL, ox_thrift_protocol_compact_binary).
 -define(HANDLER, ?MODULE).
 -define(STATS_MODULE, ?MODULE).
 -define(STATS_TABLE, ox_thrift_stats).
 -define(RECV_TIMEOUT_CLIENT, 200).
 
-new_client_direct () ->
+new_client_direct (Protocol) ->
   create_stats_table(),
-  SocketFun = direct_transport:make_get_socket(?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
-  {ok, Client} = ox_thrift_client:new(SocketFun, direct_transport, ?PROTOCOL, ?SERVICE),
+  SocketFun = direct_transport:make_get_socket(?SERVICE, Protocol, ?HANDLER, ?STATS_MODULE),
+  {ok, Client} = ox_thrift_client:new(SocketFun, direct_transport, Protocol, ?SERVICE),
   Client.
 
 destroy_client_direct (Client) ->
@@ -33,6 +32,7 @@ destroy_client_direct (Client) ->
 
 
 -define(PORT, 8024).
+-define(PROTOCOL, ox_thrift_protocol_binary).
 
 new_client_socket () ->
   create_stats_table(),
@@ -49,10 +49,10 @@ destroy_client_socket (Client) ->
   ok.
 
 
-new_client_skip () ->
-  SocketFun = direct_transport:make_get_socket(skip_service_thrift, ?PROTOCOL, skip_handler, undefined),
+new_client_skip (Protocol) ->
+  SocketFun = direct_transport:make_get_socket(skip_service_thrift, Protocol, skip_handler, undefined),
   %% SocketFun = direct_transport:make_get_socket(?SERVICE, ?PROTOCOL, ?MODULE, undefined),
-  {ok, Client} = ox_thrift_client:new(SocketFun, direct_transport, ?PROTOCOL, ?SERVICE),
+  {ok, Client} = ox_thrift_client:new(SocketFun, direct_transport, Protocol, ?SERVICE),
   Client.
 
 destroy_client_skip (Client) ->
@@ -80,8 +80,11 @@ destroy_stats_table () ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-direct_test_ () ->
-  make_tests(direct, fun new_client_direct/0, fun destroy_client_direct/1).
+direct_binary_test_ () ->
+  make_tests(direct, fun () -> new_client_direct(ox_thrift_protocol_binary) end, fun destroy_client_direct/1).
+
+direct_compact_test_ () ->
+  make_tests(direct, fun () -> new_client_direct(ox_thrift_protocol_compact) end, fun destroy_client_direct/1).
 
 socket_test_ () ->
   make_tests(socket, fun new_client_socket/0, fun destroy_client_socket/1).
@@ -114,35 +117,9 @@ timeout_client_test () ->
 
 
 skip_test () ->
-  Client0 = new_client_skip(),
-  List = [ 2, 3, 5, 8, 13 ],
-  Map = dict:from_list([{ <<"one">>, 1}, {<<"two">>, 2} ]),
-  Expected = #'MissingFields'{
-             first = 111,
-             third = 3.1416,
-             fifth = <<"ef-aye-vee-e">>,
-             seventh = false,
-             ninth = 99
-            },
-  Input = Expected#'MissingFields'{
-             second_skip = 222,
-             fourth_skip = List,
-             sixth_skip = #'AllTypes'{
-                             bool_field = true,
-                             byte_field = 151,
-                             double_field = 1.25,
-                             string_field = <<"zyzyx">>,
-                             int_list = List,
-                             string_int_map = Map},
-             eighth_skip = Map
-           },
-
-  {Client1, Output} = ox_thrift_client:call(Client0, missing, [ Input ]),
-  %% ?assertEqual(Input, Output),
-  ?assertEqual(Expected, Output),
-
-  destroy_client_skip(Client1).
-
+  [ skip_test(ox_thrift_protocol_binary)
+  , skip_test(ox_thrift_protocol_compact)
+  ].
 
 -define(F(TestName), fun () -> TestName(TestType, NewClient, DestroyClient) end).
 
@@ -210,24 +187,37 @@ sum_ints_test (_TestType, NewClientFun, DestroyClientFun) ->
 
 
 all_types_test (_TestType, NewClientFun, DestroyClientFun) ->
-  V = #'AllTypes'{
-         bool_field = true,
-         byte_field = 42,
-         i16_field = 16#7f0e,
-         i32_field = -123,
-         i64_field = 16#12345678abcdef0,
-         double_field = 10.125,
-         string_field = <<"xyzzy">>,
-         int_list = [ 1, 2, 3 ],
-         string_set = sets:from_list([ <<"a">>, <<"bb">>, <<"ccc">> ]),
-         string_int_map = dict:from_list([ {<<"I">>, 1}, {<<"V">>, 5}, {<<"X">>, 10} ])},
-
   Client0 = NewClientFun(),
 
-  {Client1, Reply1} = ox_thrift_client:call(Client0, echo, [ V ]),
-  ?assertEqual(V, Reply1),
+  V1 = #'AllTypes'{
+          bool_field = true,
+          byte_field = 42,
+          i16_field = 16#7f0e,
+          i32_field = -123,
+          i64_field = 16#12345678abcdef0,
+          double_field = 10.125,
+          string_field = <<"xyzzy">>,
+          int_list = [ 1, 2, 3 ],
+          string_set = sets:from_list([ <<"a">>, <<"bb">>, <<"ccc">> ]),
+          string_int_map = dict:from_list([ {<<"I">>, 1}, {<<"V">>, 5}, {<<"X">>, 10} ]),
+          bool_list = [ true, true, false, true ],
+          byte_list = [], %% empty list
+          double_list = [ 1.0, -2.0 ],
+          string_list = [ <<"one">>, <<"two">>, <<"three">> ]},
+  {Client1, Reply1} = ox_thrift_client:call(Client0, echo, [ V1 ]),
+  ?assertEqual(V1, Reply1),
 
-  DestroyClientFun(Client1).
+  %% Round-tripping an integer in a double field returns a float.
+  V2 = #'AllTypes'{double_field = 123},
+  {Client2, Reply2} = ox_thrift_client:call(Client1, echo, [ V2 ]),
+  ?assertEqual(#'AllTypes'{double_field = 123.0}, Reply2),
+
+  %% Round-tripping a string in a string field returns a binary.
+  V3 = #'AllTypes'{string_field = "string"},
+  {Client3, Reply3} = ox_thrift_client:call(Client2, echo, [ V3 ]),
+  ?assertEqual(#'AllTypes'{string_field = <<"string">>}, Reply3),
+
+  DestroyClientFun(Client3).
 
 
 throw_exception_test (_TestType, NewClientFun, DestroyClientFun) ->
@@ -291,6 +281,37 @@ proplist_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
 
   DestroyClientFun(Client2).
 
+
+skip_test (Protocol) ->
+  Client0 = new_client_skip(Protocol),
+
+  List = [ 2, 3, 5, 8, 13 ],
+  Map = dict:from_list([{ <<"one">>, 1}, {<<"two">>, 2} ]),
+  Expected = #'MissingFields'{
+             first = 111,
+             third = 3.1416,
+             fifth = <<"ef-aye-vee-e">>,
+             seventh = false,
+             ninth = 99
+            },
+  Input = Expected#'MissingFields'{
+             second_skip = 222,
+             fourth_skip = List,
+             sixth_skip = #'AllTypes'{
+                             bool_field = true,
+                             byte_field = 151,
+                             double_field = 1.25,
+                             string_field = <<"zyzyx">>,
+                             int_list = List,
+                             string_int_map = Map},
+             eighth_skip = Map
+           },
+
+  {Client1, Output} = ox_thrift_client:call(Client0, missing, [ Input ]),
+  %% ?assertEqual(Input, Output),
+  ?assertEqual(Expected, Output),
+
+  destroy_client_skip(Client1).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
