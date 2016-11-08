@@ -49,9 +49,11 @@ term_to_typeid ({map, _, _})             -> map.
 -spec encode_call(ServiceModule::atom(), Function::atom(), SeqId::integer(), Args::term()) ->
                      {CallType::message_type(), Data::iolist()}.
 encode_call (ServiceModule, Function, SeqId, Args) ->
-  CallType = case ServiceModule:function_info(Function, reply_type) of
+  CallType = try ServiceModule:function_info(Function, reply_type) of
                oneway_void -> call_oneway;
                _           -> call
+             catch error:function_clause ->
+                 error({unknown_function, ServiceModule, Function})
              end,
   Data = encode_message(ServiceModule, Function, call, SeqId, Args),
   {CallType, Data}.
