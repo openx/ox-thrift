@@ -9,13 +9,13 @@ incarnation, it uses the structure definitions produced by the Apache
 Thrift code generator.  However it has the following differences from
 the Apache Thrift Erlang library.
 
-* It supports only framed transports and binary protocol.
+* It supports only framed transports and binary and compact protocols.
 
-* It gives up the ability to stream to or from the transport.
+* It gives up the ability to stream directly to or from the transport.
   Instead, the processor layer decodes the thrift message from a
-  binary buffer and encodes to an iolist.  This simplifies the
-  implementation and avoids a lot of record modifications that are
-  inefficient in Erlang.
+  binary buffer and encodes to an iolist.  Compared to the Apache
+  Erlang Thrift library, this simplifies the implementation and avoids
+  a lot of record modifications that are inefficient in Erlang.
 
 * The Thrift server uses the
   [Ranch](https://github.com/ninenines/ranch) acceptor pool instead of
@@ -23,14 +23,17 @@ the Apache Thrift Erlang library.
 
 * The `HandlerModule:handle_function(Function, Args)` interface
   expects the HandlerModule to take its arguments as a list instead of
-  a tuple.
+  a tuple.  This is more consistent with Erlang conventions for
+  functions that take a variable number of arguments.
 
 * For a Thrift `map` type, for encoding OX Thrift will accept either a
   dict (as Apache Thrift does) or a proplist.  For decoding, however,
-  OX Thrift always returns a dict (as Apache Thrift does).
+  OX Thrift always returns a dict (as Apache Thrift does).  Currently
+  OX Thrift does not support the Erlang maps that were introduced in
+  Erlang 17.
 
-* Like the Apache Thrift Erlang library, OX Thrift does not enforce
-  required struct fields, on either encoding or decoding.
+* Like the Apache library, OX Thrift does not enforce required struct
+  fields, on either encoding or decoding.
 
 * Like the Apache library, OX Thrift does not populate the structs
   with default values on decoding.
@@ -50,20 +53,20 @@ module.  This module exports two functions, `new`, and `call`.
 ```
 
 * SocketFun: A zero-arity function that returns a new passive-mode
-  connection to the thrift server.  The OX Thrift client will call
+  connection to the Thrift server.  The OX Thrift client will call
   this function to open the initial connection to the Thrift server,
   and to open a new connection whenever it encounters an error on the
   existing connection.
-* Transport: A module that provides the transport layer, e.g.,
-  `gen_tcp`.  This module is expected to supply `send/2`, `recv/2`,
+* Transport: A module that provides the transport layer, such as
+  `gen_tcp`.  This module is expected to export `send/2`, `recv/3`,
   and `close/1` functions.
 * Protocol: A module that provides the Thrift protocol layer, e.g.,
-  `ox_thrift_protocol_binary`.
+  `ox_thrift_protocol_binary` or `ox_thrift_protocol_compact`.
 * Service: A module, produced by the Thrift IDL compiler from the
   service's Thrift definition, that provides the Service layer.
 * Options: A list of options.
-  * `{recv_timeout, Milliseconds}` or `{recv_timeout, infinity}`
-  The receive timeout.
+    * `{recv_timeout, Milliseconds}` or `{recv_timeout, infinity}` The
+       receive timeout.  The default is `infinity`.
 
 The following shows an example SocketFun for use with the `gen_tcp` Transport.
 
@@ -104,22 +107,22 @@ application needs to start Ranch, and then to register the
 `ox_thrift_server` module with Ranch as a protocol handler.
 
 ```erlang
-ranch:start_listener(?THRIFT_SERVICE_REF,
-                     10,                      % Number of acceptors.
-                     ranch_tcp,
-                     [ {port, Port}           % https://github.com/ninenines/ranch/blob/master/doc/src/manual/ranch_tcp.asciidoc
-                     , {reuseaddr, true}
-                     ],
-                     ox_thrift_server,        % Ranch protocol module.
-                     #ox_thrift_config{
-                        service_module = service_thrift,
-                        protocol_module = ox_thrift_protocol_binary,
-                        handler_module = ?MODULE}).
+ranch:start_listener(
+  ?THRIFT_SERVICE_REF,
+  10,                % Number of acceptors.
+  ranch_tcp,
+  [ {port, Port} ],  % https://github.com/ninenines/ranch/blob/master/doc/src/manual/ranch_tcp.asciidoc
+  ox_thrift_server,  % Ranch protocol module.
+  #ox_thrift_config{
+     service_module = service_thrift,
+     protocol_module = ox_thrift_protocol_binary,
+     handler_module = ?MODULE}).
 ```
 
 Your Thrift server must supply two functions, `handle_function` and
 `handle_error`.  These functions are defined by the `ox_thrift_server`
-behaviour.
+behaviour, and the module that supplies these functions is specified
+in the `handler_module` field.
 
 Unlike the Apache Thrift's `handle_function` Erlang interface, OX
 Thrift passes the Args parameter as a list instead of a tuple.
@@ -148,12 +151,17 @@ If the Thrift function wants to return one of its declared exceptions,
 exception and return a message to the client, where the exception will
 be re-thrown.
 
+The protocol is specified by setting the `protocol_module` field to
+one of the following values.
+
+* `ox_thrift_protocol_binary`: binary protocol
+* `ox_thrift_protocol_compact`: compact protocol
 
 #### Setting the Server's `recv` Timeout
 
 The default `recv` timeout is `infinity`, which means that the server
 will keep a socket open indefinitely waiting for a client to send a
-request. You can override this with the `recv_timeout` option.
+request.  You can override this with the `recv_timeout` option.
 
 ``` erlang
 #ox_thrift_config{options = [ { recv_timeout, TimeoutMilliseconds } ]}
@@ -208,26 +216,13 @@ If your Thrift service is "svc" the ServiceTypesModule will be `svc_types`.
 
 ## Speedup
 
-These numbers were taken from benchmarks of a production SSRTB system.
+These numbers were taken from benchmarks of the binary protocol on a
+production SSRTB system.
 
 |        |Apache Thrift|OX Thrift|Speedup|
-|--------|-------------|---------|-------|
+|--------|------------:|--------:|------:|
 |Decoding|      1098 us|   244 us|  4.5 x|
 |Encoding|       868 us|   185 us|  4.7 x|
-
-<!--
-```
-[{decode,13569,14898510,1098},
- {encode,10764,9338300,868}]
-```
-
-New Code
-```
-(erlang@xfga-e27.xf.dc.openx.org)8> ssrtb_thrift_service:print_stats().
-decode    8135310 us /    33373 =  244 us
-encode    4902716 us /    26462 =  185 us
-```
--->
 
 ## Message Protocol
 
@@ -242,7 +237,7 @@ See the [message protocol documentation](MessageProtocol.md).
   following speedups:
 
   |Optimization   |Decoding|Encoding|
-  |---------------|--------|--------|
+  |---------------|-------:|-------:|
   |Layer Squashing|2x      |8x      |
   |Generated Funs |16x     |16x     |
 
@@ -253,3 +248,7 @@ See the [message protocol documentation](MessageProtocol.md).
 * The
   [Thrift paper](https://thrift.apache.org/static/files/thrift-20070401.pdf),
   which describes the design and data encoding protocol for Thrift.
+
+* Erik van Oosten's
+  [Thrift Specification -- Remote Procedure Call](https://erikvanoosten.github.io/thrift-missing-specification/)
+  (a.k.a, "Thrift: The Missing Specification").

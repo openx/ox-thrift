@@ -1,3 +1,6 @@
+* Thu Nov 10 2016 David Hull <david.hull@openx.com> 0.7.0
+- APPS-14103: Add compact protocol support.
+
 * Thu Oct 6 2016 David Hull <david.hull@openx.com> 0.6.0
 - APPS-13779: Add encode_record and decode_record functions.
 
