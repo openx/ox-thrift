@@ -37,12 +37,15 @@ make_get_socket (Port) ->
 
 -define(SERVICE_REF, test_service).
 
+start_application (Application) ->
+  case application:start(Application) of
+    ok                                    -> ok;
+    {error,{already_started,Application}} -> ok;
+    Error                                 -> error(Error)
+  end.
+
 start_server (Port, ServiceModule, ProtocolModule, HandlerModule, StatsModule) ->
-  case application:start(ranch) of
-    ok                              -> ok;
-    {error,{already_started,ranch}} -> ok;
-    Error                           -> error(Error)
-  end,
+  lists:foreach(fun start_application/1, [ asn1, public_key, ssl, ranch ]),
 
   Config = #ox_thrift_config{
               service_module = ServiceModule,
