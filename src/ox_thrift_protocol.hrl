@@ -4,6 +4,14 @@
 -include("ox_thrift_internal.hrl").
 -include("ox_thrift.hrl").
 
+-ifdef(OXTHRIFT_NO_MAPS).
+-define(IS_MAP(Term), false).
+-define(MAP_SIZE(Term), 0).
+-else.
+-define(IS_MAP(Term), is_map(Term)).
+-define(MAP_SIZE(Term), map_size(Term)).
+-endif.
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 encode_record ({Schema, StructName}, Record) when StructName =:= element(1, Record) ->
@@ -165,6 +173,14 @@ encode ({map, KeyType, ValType}, Data) ->
                         , encode(ValType, Val)
                         | Acc ]
                     end, [], Data)
+      ];
+    ?IS_MAP(Data) ->
+      [ write_map_begin(KeyTId, ValTId, ?MAP_SIZE(Data))
+      , maps:fold(fun (Key, Val, Acc) ->
+                      [ encode(KeyType, Key)
+                      , encode(ValType, Val)
+                      | Acc ]
+                  end, [], Data)
       ];
     true ->
       %% Encode a dict as a map.

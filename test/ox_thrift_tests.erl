@@ -132,6 +132,7 @@ make_tests (TestType, NewClient, DestroyClient) ->
   , ?F(throw_exception_test)
   , ?F(cast_test)
   , ?F(proplist_as_map_test)
+  , ?F(map_as_map_test)
   ].
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -277,10 +278,11 @@ proplist_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
   PL1 = lists:map(fun ({K, V}) -> {V, K} end, PL0),
   D0 = dict:from_list(PL0),
   D1 = dict:from_list(PL1),
-  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, PL0 ]),
+
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNDICT, PL0 ]),
   ?assertEqual(D1, Reply1),
 
-  {ok, Client2, Reply2} = ox_thrift_client:call(Client1, swapkv, [ ?TEST_MAPRET_RETURNMAP, D0 ]),
+  {ok, Client2, Reply2} = ox_thrift_client:call(Client1, swapkv, [ ?TEST_MAPRET_RETURNDICT, D0 ]),
   ?assertEqual(D1, Reply2),
 
   {ok, Client3, Reply3} = ox_thrift_client:call(Client2, swapkv, [ ?TEST_MAPRET_RETURNPROPLIST, PL0 ]),
@@ -290,6 +292,24 @@ proplist_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
   ?assertEqual(D1, Reply4),
 
   DestroyClientFun(Client4).
+
+
+-ifdef(OXTHRIFT_NO_MAPS).
+map_as_map_test (_TestType, NewClientFun, DestroyClientFun) -> ok.
+-else. %% ! OXTHRIFT_NO_MAPS
+map_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
+  Client0 = NewClientFun(),
+
+  PL0 = [ {1, <<"one">>}, {2, <<"two">>} ],
+  PL1 = lists:map(fun ({K, V}) -> {V, K} end, PL0),
+  M0 = maps:from_list(PL0),
+  D1 = dict:from_list(PL1),
+
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, M0 ]),
+  ?assertEqual(D1, Reply1),
+
+  DestroyClientFun(Client1).
+-endif. %% ! OXTHRIFT_NO_MAPS
 
 
 skip_test (Protocol) ->
@@ -334,8 +354,9 @@ handle_function (Function, Args) ->
     swapkv  -> [ RetType, Dict ] = Args,
                Proplist = dict:fold(fun (K, V, Acc) -> [ {V, K} | Acc ] end, [], Dict),
                Reply = case RetType of
-                         ?TEST_MAPRET_RETURNMAP      -> dict:from_list(Proplist);
-                         ?TEST_MAPRET_RETURNPROPLIST -> Proplist
+                         ?TEST_MAPRET_RETURNDICT     -> dict:from_list(Proplist);
+                         ?TEST_MAPRET_RETURNPROPLIST -> Proplist;
+                         ?TEST_MAPRET_RETURNMAP      -> maps:from_list(Proplist)
                        end,
                {reply, Reply};
     missing -> {reply, hd(Args)};

@@ -26,11 +26,10 @@ the Apache Thrift Erlang library.
   a tuple.  This is more consistent with Erlang conventions for
   functions that take a variable number of arguments.
 
-* For a Thrift `map` type, for encoding OX Thrift will accept either a
-  dict (as Apache Thrift does) or a proplist.  For decoding, however,
-  OX Thrift always returns a dict (as Apache Thrift does).  Currently
-  OX Thrift does not support the Erlang maps that were introduced in
-  Erlang 17.
+* For the Thrift `map` type, for encoding OX Thrift will accept either
+  a dict (as Apache Thrift does), a proplist, or an Erlang map.  For
+  decoding, however, OX Thrift always returns a dict (as Apache Thrift
+  does).
 
 * Like the Apache library, OX Thrift does not enforce required struct
   fields, on either encoding or decoding.
