@@ -96,12 +96,12 @@ timeout_server_test () ->
   Client0 = new_client_socket(),
   ?assertEqual([], ets:lookup(?STATS_TABLE, {undefined, timeout})),
   application:set_env(ox_thrift, exceptions_include_traces, true),
-  {Client1, Res1} = ox_thrift_client:call(Client0, add_one, [ 1 ]),
+  {ok, Client1, Res1} = ox_thrift_client:call(Client0, add_one, [ 1 ]),
   ?assertEqual(2, Res1),
   ?assertEqual([], ets:lookup(?STATS_TABLE, {undefined, timeout})),
   timer:sleep(200), %% Server recv should time out.
   ?assertEqual([ {{undefined, timeout}, 1} ], ets:lookup(?STATS_TABLE, {undefined, timeout})),
-  {Client2, Res2} = ox_thrift_client:call(Client1, add_one, [ 2 ]),
+  {ok, Client2, Res2} = ox_thrift_client:call(Client1, add_one, [ 2 ]),
   ?assertEqual(3, Res2),
   ?assertEqual([ {{undefined, timeout}, 1} ], ets:lookup(?STATS_TABLE, {undefined, timeout})),
   destroy_client_socket(Client2).
@@ -109,12 +109,11 @@ timeout_server_test () ->
 
 timeout_client_test () ->
   Client0 = new_client_socket(),
-  {Client1, Res1} = ox_thrift_client:call(Client0, wait, [ ?RECV_TIMEOUT_CLIENT - 100 ]),
+  {ok, Client1, Res1} = ox_thrift_client:call(Client0, wait, [ ?RECV_TIMEOUT_CLIENT - 100 ]),
   ?assertEqual(ok, Res1),
-  {'EXIT', {{Client2, Res2}, _}} = begin catch ox_thrift_client:call(Client1, wait, [ ?RECV_TIMEOUT_CLIENT + 100 ]) end,
-  ?assertEqual({error, timeout}, Res2),
+  {error, Client2, timeout} = ox_thrift_client:call(Client1, wait, [ ?RECV_TIMEOUT_CLIENT + 100 ]),
   %% Check that ox_thrift_client successfully reconnects after connection is closed.
-  {Client3, Res3} = ox_thrift_client:call(Client2, add_one, [ 123 ]),
+  {ok, Client3, Res3} = ox_thrift_client:call(Client2, add_one, [ 123 ]),
   ?assertEqual(124, Res3),
   destroy_client_socket(Client3).
 
@@ -140,10 +139,10 @@ make_tests (TestType, NewClient, DestroyClient) ->
 add_one_test (TestType, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
-  {Client1, Reply1} = ox_thrift_client:call(Client0, add_one, [ 99 ]),
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, add_one, [ 99 ]),
   ?assertEqual(100, Reply1),
 
-  {Client2, Reply2} = ox_thrift_client:call(Client1, add_one, [ 42 ]),
+  {ok, Client2, Reply2} = ox_thrift_client:call(Client1, add_one, [ 42 ]),
   ?assertEqual(43, Reply2),
 
   ConnectionModule = ox_thrift_client:get_connection_module(Client2),
@@ -176,15 +175,17 @@ add_one_test (TestType, NewClientFun, DestroyClientFun) ->
 sum_ints_test (_TestType, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
-  {Client1, Reply1} = ox_thrift_client:call(Client0, sum_ints, [ #'Container'{first_field = 1, third_field = 10}, 35 ]),
+  {ok, Client1, Reply1} =
+    ox_thrift_client:call(Client0, sum_ints, [ #'Container'{first_field = 1, third_field = 10}, 35 ]),
   ?assertEqual(46, Reply1),
 
-  {Client2, Reply2} = ox_thrift_client:call(Client1, sum_ints,
-                                             [ #'Container'{first_field = 1,
-                                                            second_struct = #'Integers'{int_field = 2,
-                                                                                        int_list = [ 4, 8 ],
-                                                                                        int_set = sets:from_list([ 16, 32 ])},
-                                                            third_field = 64}, 128 ]),
+  {ok, Client2, Reply2} =
+    ox_thrift_client:call(Client1, sum_ints,
+                          [ #'Container'{first_field = 1,
+                                         second_struct = #'Integers'{int_field = 2,
+                                                                     int_list = [ 4, 8 ],
+                                                                     int_set = sets:from_list([ 16, 32 ])},
+                                         third_field = 64}, 128 ]),
   ?assertEqual(255, Reply2),
 
   DestroyClientFun(Client2).
@@ -208,17 +209,17 @@ all_types_test (_TestType, NewClientFun, DestroyClientFun) ->
           byte_list = [], %% empty list
           double_list = [ 1.0, -2.0 ],
           string_list = [ <<"one">>, <<"two">>, <<"three">> ]},
-  {Client1, Reply1} = ox_thrift_client:call(Client0, echo, [ V1 ]),
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, echo, [ V1 ]),
   ?assertEqual(V1, Reply1),
 
   %% Round-tripping an integer in a double field returns a float.
   V2 = #'AllTypes'{double_field = 123},
-  {Client2, Reply2} = ox_thrift_client:call(Client1, echo, [ V2 ]),
+  {ok, Client2, Reply2} = ox_thrift_client:call(Client1, echo, [ V2 ]),
   ?assertEqual(#'AllTypes'{double_field = 123.0}, Reply2),
 
   %% Round-tripping a string in a string field returns a binary.
   V3 = #'AllTypes'{string_field = "string"},
-  {Client3, Reply3} = ox_thrift_client:call(Client2, echo, [ V3 ]),
+  {ok, Client3, Reply3} = ox_thrift_client:call(Client2, echo, [ V3 ]),
   ?assertEqual(#'AllTypes'{string_field = <<"string">>}, Reply3),
 
   DestroyClientFun(Client3).
@@ -232,38 +233,29 @@ is_open (Client) ->
 throw_exception_test (_TestType, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
-  {Client1, Reply1} = ox_thrift_client:call(Client0, throw_exception, [ ?TEST_THROWTYPE_NORMALRETURN ]),
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, throw_exception, [ ?TEST_THROWTYPE_NORMALRETURN ]),
   ?assertEqual(101, Reply1),
 
-  Client2 =
-    try ox_thrift_client:call(Client1, throw_exception, [ ?TEST_THROWTYPE_DECLAREDEXCEPTION ]) of
-        Result2 -> error({unexpected_success, ?MODULE, ?LINE, Result2})
-    catch throw:{Client2a, Reply2} ->
-        %% Declared exception should not cause connection to be closed.
-        ?assertEqual(true, is_open(Client2a)),
-        ?assertEqual(simple_exception(), Reply2),
-        Client2a
-    end,
+  {Throw2, Client2, Reply2} =
+    ox_thrift_client:call(Client1, throw_exception, [ ?TEST_THROWTYPE_DECLAREDEXCEPTION ]),
+  %% Declared exception should not cause connection to be closed.
+  ?assertEqual(throw, Throw2),
+  ?assertEqual(true, is_open(Client2)),
+  ?assertEqual(simple_exception(), Reply2),
 
-  Client3 =
-    try ox_thrift_client:call(Client2, throw_exception, [ ?TEST_THROWTYPE_UNDECLAREDEXCEPTION ]) of
-        Result3 -> error({unexpected_success, ?MODULE, ?LINE, Result3})
-    catch error:{Client3a, Reply3} ->
-        %% Undeclared exception should cause connection to be closed.
-        ?assertEqual(false, is_open(Client3a)),
-        ?assertMatch(#application_exception{type=0}, Reply3),
-        Client3a
-    end,
+  {Error3, Client3, Reply3} =
+    ox_thrift_client:call(Client2, throw_exception, [ ?TEST_THROWTYPE_UNDECLAREDEXCEPTION ]),
+  %% Undeclared exception should cause connection to be closed.
+  ?assertEqual(error, Error3),
+  ?assertEqual(false, is_open(Client3)),
+  ?assertMatch(#application_exception{type=0}, Reply3),
 
-  Client4 =
-    try ox_thrift_client:call(Client3, throw_exception, [ ?TEST_THROWTYPE_ERROR ]) of
-        Result4 -> error({unexpected_success, ?MODULE, ?LINE, Result4})
-    catch error:{Client4a, Reply4} ->
-        %% Error should cause connection to be closed.
-        ?assertEqual(false, is_open(Client4a)),
-        ?assertMatch(#application_exception{type=0}, Reply4),
-        Client4a
-    end,
+  {Error4, Client4, Reply4} =
+    ox_thrift_client:call(Client3, throw_exception, [ ?TEST_THROWTYPE_ERROR ]),
+  %% Error should cause connection to be closed.
+  ?assertEqual(error, Error4),
+  ?assertEqual(false, is_open(Client4)),
+  ?assertMatch(#application_exception{type=0}, Reply4),
 
   DestroyClientFun(Client4).
 
@@ -271,7 +263,7 @@ throw_exception_test (_TestType, NewClientFun, DestroyClientFun) ->
 cast_test (_TestType, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
-  {Client1, Reply1} = ox_thrift_client:call(Client0, cast, [ <<"hello world">> ]),
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, cast, [ <<"hello world">> ]),
   %% ?assertNotEqual(undefined, ox_thrift_client:get_socket(Client1)), FIXME
   ?assertEqual(ok, Reply1),
 
@@ -285,13 +277,19 @@ proplist_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
   PL1 = lists:map(fun ({K, V}) -> {V, K} end, PL0),
   D0 = dict:from_list(PL0),
   D1 = dict:from_list(PL1),
-  {Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, PL0 ]),
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, PL0 ]),
   ?assertEqual(D1, Reply1),
 
-  {Client2, Reply2} = ox_thrift_client:call(Client1, swapkv, [ ?TEST_MAPRET_RETURNMAP, D0 ]),
+  {ok, Client2, Reply2} = ox_thrift_client:call(Client1, swapkv, [ ?TEST_MAPRET_RETURNMAP, D0 ]),
   ?assertEqual(D1, Reply2),
 
-  DestroyClientFun(Client2).
+  {ok, Client3, Reply3} = ox_thrift_client:call(Client2, swapkv, [ ?TEST_MAPRET_RETURNPROPLIST, PL0 ]),
+  ?assertEqual(D1, Reply3),
+
+  {ok, Client4, Reply4} = ox_thrift_client:call(Client3, swapkv, [ ?TEST_MAPRET_RETURNPROPLIST, D0 ]),
+  ?assertEqual(D1, Reply4),
+
+  DestroyClientFun(Client4).
 
 
 skip_test (Protocol) ->
@@ -319,7 +317,7 @@ skip_test (Protocol) ->
              eighth_skip = Map
            },
 
-  {Client1, Output} = ox_thrift_client:call(Client0, missing, [ Input ]),
+  {ok, Client1, Output} = ox_thrift_client:call(Client0, missing, [ Input ]),
   %% ?assertEqual(Input, Output),
   ?assertEqual(Expected, Output),
 

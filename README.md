@@ -81,11 +81,12 @@ support the following functions on this Socket.
 #### `call` -- Make a Call to a Thrift Server
 
 ``` erlang
-{OClient, Result} = ox_thrift_client:call(IClient, Function, Args)
+{ok, OClient, Result} = ox_thrift_client:call(IClient, Function, Args)
 ```
 
-* IClient: An `ox_thrift_client` record, as produced by the
-  `ox_thrift_client:new` call.
+* IClient: An `ox_thrift_client` record, as returned by the
+  `ox_thrift_client:new` call or a previous `ox_thrift_client:call`
+  call.
 * Function: An atom representing the function to call.
 * Args: A list containing the arguments to Function.
 

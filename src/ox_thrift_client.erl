@@ -1,4 +1,4 @@
-%% Copyright 2016, OpenX.  All rights reserved.
+%% Copyright 2016, 2017 OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_client).
@@ -23,16 +23,30 @@
 -type ox_thrift_client() :: #ox_thrift_client{}.
 
 
--define(RETURN_ERROR(Client, Socket, Error),
-        begin
-          ?LOG("return_error ~p ~p\n", [ Client, Error ]),
-          error({checkin(Client, Socket, error), Error})
-        end).
-
-
 new (Connection, ConnectionState, Transport, Protocol, Service) ->
   new(Connection, ConnectionState, Transport, Protocol, Service, []).
 
+-spec new(Connection::atom(), ConnectionState::term(),
+          Transport::atom(), Protocol::atom(), Service::atom(),
+          Options::list()) ->
+             {ok, Client::ox_thrift_client()}.
+%% @doc Returns a new client, to be used in subsequent calls to {@link call/3}.
+%%
+%% * Connection: A module that manages a connection to the Thrift server.
+%%   This module must support the interface defined by {@link
+%%   ox_thrift_connection}.
+%% * ConnectionState: The initial state for the Connection module, returned by
+%%   its `new' function.
+%% * Transport: A module that provides the transport layer, such as
+%%   {@link gen_tcp}.  This module is expected to export `send/2`, `recv/3`,
+%%   and `close/1` functions.
+%% * Protocol: A module that provides the Thrift protocol layer, e.g.,
+%%   `ox_thrift_protocol_binary' or `ox_thrift_protocol_compact'.
+%% * Service: A module, produced by the Thrift IDL compiler from the
+%%   service's Thrift definition, that provides the Service layer.
+%% * Options: A list of options.
+%%     * `{recv_timeout, Milliseconds}' or `{recv_timeout, infinity}' The
+%%        receive timeout.  The default is `infinity'.
 new (Connection, ConnectionState, Transport, Protocol, Service, Options)
   when is_atom(Connection), is_atom(Transport), is_atom(Protocol), is_atom(Service) ->
   Client0 = #ox_thrift_client{
@@ -64,21 +78,41 @@ get_seqid (#ox_thrift_client{seqid=SeqId}) ->
   SeqId.
 
 
-%% Formats the message and chains to call1.
 -spec call(Client::#ox_thrift_client{}, Function::atom(), Args::list()) ->
-              {OClient::#ox_thrift_client{}, Reply::term()}.
+              {ok, OClient::#ox_thrift_client{}, Reply::term()} |
+              {throw, OClient::#ox_thrift_client{}, Exception::term()} |
+              {error, OClient::#ox_thrift_client{}, Reason::term()}.
+%% @doc Calls a Thrift server and returns the result.
+%%
+%% * IClient: An `ox_thrift_client' record, as returned by the
+%%   {@link ox_thrift_client:new/6} call or a previous {@link ox_thrift_client:call/3}
+%%   call.
+%% * Function: An atom representing the function to call.
+%% * Args: A list containing the arguments to Function.
+%%
+%% The return value is
+%% * `{ok, OClient, Reply}' for a normal return.  Reply is the Function's
+%%    return value, or `ok' for a cast.
+%% * `{throw, OClient, Exception}' if the call returns a declared exception.
+%% * `{error, OClient, #application_exception{}}' if the function throws an
+%%    undeclared exception.
+%% * `{error, OClient, busy}' if you're using {@link ox_thrift_socket_pool}
+%%    and you've reached the `max_connections' limit.
+%% * `{error, OClient, timeout}' if the call times out.
+%% * `{error, OClient, Reason}' if some other transport error happens.
 call (Client=#ox_thrift_client{protocol_module=Protocol, service_module=Service, seqid=SeqId}, Function, Args)
   when is_atom(Function), is_list(Args) ->
+  %% Formats the message and chains to call1.
   {CallType, RequestMsg} = Protocol:encode_call(Service, Function, SeqId, Args),
   call1(Client, CallType, RequestMsg, ?MAX_TRIES).
 
 %% Gets the socket and chains to call2.
 call1 (Client, _CallType, _RequestMsg, 0) ->
-  error({Client, {error, max_retries}});
+  {error, Client, max_retries};
 call1 (Client=#ox_thrift_client{connection_module=Connection, connection_state=ConnectionState}, CallType, RequestMsg, TriesLeft) ->
   case Connection:checkout(ConnectionState) of
-    {ok, Socket} -> call2(Client, CallType, RequestMsg, Socket, TriesLeft);
-    Error        -> error({Client, Error})
+    {ok, Socket}    -> call2(Client, CallType, RequestMsg, Socket, TriesLeft);
+    {error, Reason} -> {error, Client, Reason}
   end.
 
 %% Sends the request and chains to call3.  Retry once if we discover that the
@@ -89,13 +123,13 @@ call2 (Client=#ox_thrift_client{transport_module=Transport}, CallType, RequestMs
   case Transport:send(Socket, [ <<Length:32/big-signed>>, RequestMsg ]) of
     ok              -> call3(Client, CallType, RequestMsg, Socket, TriesLeft);
     {error, closed} -> call1(checkin(Client, Socket, closed), CallType, RequestMsg, TriesLeft - 1);
-    Error           -> ?RETURN_ERROR(Client, Socket, Error)
+    {error, Reason} -> {error, checkin(Client, Socket, error), Reason}
   end.
 
 %% Receives the response data and chains to call4.  Retry once if we discover
 %% that the socket is closed.
 call3 (Client, call_oneway, _RequestMsg, Socket, _TriesLeft) ->
-  {checkin(Client, Socket, ok), ok};
+  {ok, checkin(Client, Socket, ok), ok};
 call3 (Client=#ox_thrift_client{transport_module=Transport, recv_timeout=RecvTimeout}, call, RequestMsg, Socket, TriesLeft) ->
   %% Implement thrift_framed_transport.
   %% When recv is called with a non-zero length, it will return `{error,
@@ -104,22 +138,22 @@ call3 (Client=#ox_thrift_client{transport_module=Transport, recv_timeout=RecvTim
     {ok, LengthBin} ->
       <<Length:32/integer-signed-big>> = LengthBin,
       case Transport:recv(Socket, Length, RecvTimeout) of
-        {ok, ReplyData} -> call4(Client, Socket, ReplyData);
-        ErrorRecvData   -> ?RETURN_ERROR(Client, Socket, ErrorRecvData)
+        {ok, ReplyData}         -> call4(Client, Socket, ReplyData);
+        {error, ReasonRecvData} -> {error, checkin(Client, Socket, error), ReasonRecvData}
       end;
     %% If the remote end has closed its end of the socket even before we send,
     %% we may discover that only when we try to read data.
-    {error, closed}     -> call1(checkin(Client, Socket, closed), call, RequestMsg, TriesLeft - 1);
-    ErrorRecvLength     -> ?RETURN_ERROR(Client, Socket, ErrorRecvLength)
+    {error, closed}           -> call1(checkin(Client, Socket, closed), call, RequestMsg, TriesLeft - 1);
+    {error, ReasonRecvLength} -> {error, checkin(Client, Socket, error), ReasonRecvLength}
   end.
 
 %% Parses the response data and returns the reply.
 call4 (Client=#ox_thrift_client{protocol_module=Protocol, service_module=Service, seqid=InSeqId}, Socket, ReplyData) ->
   {_Function, MessageType, SeqId, Reply} = Protocol:decode_message(Service, ReplyData),
-  if SeqId =/= InSeqId               -> ?RETURN_ERROR(Client, Socket, application_exception_seqid(InSeqId, SeqId));
-     MessageType =:= reply_normal    -> {checkin(Client, Socket, ok), Reply};
-     MessageType =:= reply_exception -> throw({checkin(Client, Socket, ok), Reply});
-     MessageType =:= exception       -> ?RETURN_ERROR(Client, Socket, Reply)
+  if SeqId =/= InSeqId               -> {error, checkin(Client, Socket, error), application_exception_seqid(InSeqId, SeqId)};
+     MessageType =:= reply_normal    -> {ok, checkin(Client, Socket, ok), Reply};
+     MessageType =:= reply_exception -> {throw, checkin(Client, Socket, ok), Reply};
+     MessageType =:= exception       -> {error, checkin(Client, Socket, error), Reply}
   end.
 
 application_exception_seqid (ExpectedSeqId, ActualSeqId) ->
