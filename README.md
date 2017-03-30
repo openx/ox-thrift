@@ -249,6 +249,12 @@ See the [message protocol documentation](MessageProtocol.md).
   |Layer Squashing|2x      |8x      |
   |Generated Funs |16x     |16x     |
 
+* [Thrash](https://github.com/dantswain/thrash) is an Elixir library
+  that automatically generates functions for decoding and encoding
+  Thrift messages using the binary protocol.  The author claims
+  speedups of 18x for decoding and 5x for encoding over the Apache
+  Thrift library.
+
 * Erlang documentation on
   [Constructing and Matching Binaries](http://erlang.org/doc/efficiency_guide/binaryhandling.html),
   which may be useful for optimization.
