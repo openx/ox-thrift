@@ -1,4 +1,4 @@
-%% Copyright 2016, OpenX.  All rights reserved.
+%% Copyright 2016, 2017 OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_server).
@@ -118,9 +118,11 @@ loop3 (State, Function, ReplyOptions) ->
 
 
 -spec handle_request(Config::#ts_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom(), ReplyOptions::reply_options()}.
-handle_request (Config=#ts_config{handler_module=HandlerModule}, RequestData) ->
+handle_request (Config=#ts_config{protocol_module=ProtocolModule, handler_module=HandlerModule}, RequestData) ->
+  Protocol = detect_protocol(RequestData, ProtocolModule),
+
   %% Should do a try block around decode_message. @@
-  {Function, CallType, SeqId, Args} = decode(Config, RequestData),
+  {Function, CallType, SeqId, Args} = decode(Config, Protocol, RequestData),
 
   {ResultMsg, ReplyOptions} =
     try
@@ -129,17 +131,17 @@ handle_request (Config=#ts_config{handler_module=HandlerModule}, RequestData) ->
       ?LOG("result ~p ~p\n", [ CallType, Result ]),
       {Reply, ReplyOptions0} = reply_options(Result),
       R = case {CallType, Reply} of
-            {call, Reply}            -> encode(Config, Function, reply_normal, SeqId, Reply);
+            {call, Reply}            -> encode(Config, Protocol, Function, reply_normal, SeqId, Reply);
             {call_oneway, undefined} -> noreply
           end,
       {R, ReplyOptions0}
     catch
       throw:Reason ->
-        {encode(Config, Function, reply_exception, SeqId, Reason), undefined};
+        {encode(Config, Protocol, Function, reply_exception, SeqId, Reason), undefined};
       error:Reason ->
         Message = ox_thrift_util:format_error_message(Reason),
         ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
-        {encode(Config, Function, exception, SeqId, ExceptionReply), undefined}
+        {encode(Config, Protocol, Function, exception, SeqId, ExceptionReply), undefined}
     end,
 
   %% ?LOG("handle_request -> ~p\n", [ {ResultMsg, Function } ]),
@@ -160,8 +162,8 @@ handle_error (State=#ts_state{socket=Socket, transport=Transport, config=#ts_con
   Transport:close(Socket).
 
 
--spec decode(Config::#ts_config{}, RequestData::binary()) -> Result::tuple().
-decode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=StatsModule}, RequestData) ->
+-spec decode(Config::#ts_config{}, ProtocolModule::atom(), RequestData::binary()) -> Result::tuple().
+decode (#ts_config{service_module=ServiceModule, stats_module=StatsModule}, ProtocolModule, RequestData) ->
   Stats0 = collect_stats(StatsModule),
   Result = ProtocolModule:decode_message(ServiceModule, RequestData),
   case Stats0 of
@@ -176,8 +178,8 @@ decode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, 
   Result.
 
 
--spec encode(Config::#ts_config{}, Function::atom(), MessageType::message_type(), Seqid::integer(), Args::term()) -> ReplyData::iolist().
-encode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, stats_module=StatsModule}, Function, MessageType, SeqId, Args) ->
+-spec encode(Config::#ts_config{}, ProtocolModule::atom(), Function::atom(), MessageType::message_type(), Seqid::integer(), Args::term()) -> ReplyData::iolist().
+encode (#ts_config{service_module=ServiceModule, stats_module=StatsModule}, ProtocolModule, Function, MessageType, SeqId, Args) ->
   Stats0 = collect_stats(StatsModule),
   Result = ProtocolModule:encode_message(ServiceModule, Function, MessageType, SeqId, Args),
   case Stats0 of
@@ -189,6 +191,13 @@ encode(#ts_config{service_module=ServiceModule, protocol_module=ProtocolModule, 
                                          , {encode_reductions, Reductions1 - Reductions0} ])
   end,
   Result.
+
+
+-spec detect_protocol(Buffer::binary(), Default::atom()) -> atom().
+detect_protocol (<<16#82, _/binary>>, _Default)       -> ox_thrift_protocol_compact;
+detect_protocol (<<16#80, 16#1, _/binary>>, _Default) -> ox_thrift_protocol_binary; %% binary version 1
+detect_protocol (<<0, 0, _/binary>>, _Default)        -> ox_thrift_protocol_binary; %% binary version 0
+detect_protocol (_, Default)                          -> Default.
 
 
 collect_stats (undefined) -> undefined;
