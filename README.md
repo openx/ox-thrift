@@ -351,6 +351,8 @@ See the [message protocol documentation](MessageProtocol.md).
 
 ## Acknowledgements
 
-Many thanks to [Yoshihiro Tanaka](https://github.com/hirotnk)
-and [Anthony Molinaro](https://github.com/djnym) for their insights
-and suggestions.
+Many thanks to
+[Yoshihiro Tanaka](https://github.com/hirotnk),
+[Anthony Molinaro](https://github.com/djnym), and
+[Kénan Gillet](https://github.com/kenan-gillet)
+for their insights and suggestions.
