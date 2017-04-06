@@ -182,11 +182,22 @@ stats (Id) ->
   gen_server:call(Id, stats).
 
 -record(connection, {
-          socket = error({required, socket}) :: inet:socket(),
+          socket = error({required, socket}) :: inet:socket() | reference(),
           lifetime_epoch_ms = error({required, lifetime_epoch_ms}) :: non_neg_integer() | 'infinity',
           monitor_ref :: reference() | 'undefined',
           owner :: pid() | 'undefined',
           use_count = 0 :: non_neg_integer()}).
+
+-record(open_start, {
+          reference = error({required, reference}) :: reference(),
+          host = error({required, host}) :: inet:hostname() | inet:ip_address(),
+          port = error({required, port}) :: inet:port_number(),
+          connect_timeout_ms = infinity :: pos_integer() | 'infinity',
+          pool_pid = error({required, pool_pid}) :: pid()}).
+
+-record(open_complete, {
+          reference = error({required, reference}) :: reference(),
+          socket :: inet:socket() | 'error'}).
 
 
 -spec new({Id::atom(), Host::inet:hostname(), Port::inet:port_number(), Options::list()}) -> Id::atom().
@@ -235,7 +246,20 @@ destroy (Id) ->
 %% that old connections will be quickly removed the pool if is actively being
 %% used.
 checkout (Id) ->
-  gen_server:call(Id, checkout).
+  case gen_server:call(Id, checkout) of
+    #open_start{reference=Ref, host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, pool_pid = PoolPid} ->
+      case gen_tcp:connect(Host, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ], ConnectTimeoutMS) of
+        Success={ok, Socket} ->
+          ok = gen_tcp:controlling_process(Socket, PoolPid),
+          gen_server:cast(Id, #open_complete{reference = Ref, socket = Socket}),
+          Success;
+        Error ->
+          gen_server:cast(Id, #open_complete{reference = Ref, socket = error}),
+          Error
+      end;
+    OKOrErrorReply={OKOrError, _} when OKOrError =:= ok; OKOrError =:= error ->
+      OKOrErrorReply
+  end.
 
 
 -spec checkin(Id::atom(), Socket::gen_tcp:socket(), Status::ox_thrift_connection:status()) -> Id::atom().
@@ -274,7 +298,7 @@ handle_call (checkout, {CallerPid, _Tag}, State=#state{idle_queue=IdleQueue}) ->
   {Reply, StateOut} =
     case queue:is_empty(IdleQueue) of
       false -> get_idle(CallerPid, State);
-      true  -> open(CallerPid, State)
+      true  -> open_start(CallerPid, State)
     end,
   {reply, Reply, StateOut};
 handle_call (get_state, _From, State) ->
@@ -313,6 +337,10 @@ handle_call (Request, _From, State) ->
 %% @hidden
 handle_cast ({checkin, Socket, Status, Pid}, State) ->
   StateOut = maybe_put_idle(Socket, Status, Pid, State),
+  {noreply, StateOut};
+%% @hidden
+handle_cast(OpenComplete=#open_complete{}, State) ->
+  StateOut = open_complete(OpenComplete, State),
   {noreply, StateOut};
 handle_cast (_, State) ->
   {noreply, State}.
@@ -390,35 +418,54 @@ put_idle (Socket, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue}) ->
   State#state{idle = Idle + 1, busy = Busy - 1, idle_queue = IdleQueueOut}.
 
 
--spec open(CallerPid::pid(), State::#state{}) -> {({'ok', Socket::inet:socket()} | {'error', Reason::term()}), #state{}}.
-open (CallerPid, State) ->
+-spec open_start(CallerPid::pid(), State::#state{}) -> {({'ok', Socket::inet:socket()} | {'error', Reason::term()}), #state{}}.
+open_start (CallerPid, State) ->
   case State of
-    #state{remaining_connections=0} -> {{error, busy}, State#state{error_pool_full=State#state.error_pool_full + 1}};
+    #state{remaining_connections=0} ->
+      {{error, busy}, State#state{error_pool_full=State#state.error_pool_full + 1}};
     #state{remaining_connections=Remaining, busy=Busy,
            host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS, max_age_jitter_ms=MaxJitterMS,
            connections=Connections}
       when Remaining > 0 ->
-      case gen_tcp:connect(Host, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ], ConnectTimeoutMS) of
-        Success={ok, Socket} ->
-          LifetimeEpochMS = case MaxAgeMS of
-                              infinity -> infinity;
-                              _        -> JitterMS = case MaxJitterMS of 0 -> 0; _ -> rand:uniform(MaxJitterMS + 1) - 1 end,
-                                          now_ms(os:timestamp()) + MaxAgeMS + JitterMS
-                            end,
-          MonitorRef = monitor(process, CallerPid),
-          ConnectionOut = #connection{socket = Socket, lifetime_epoch_ms = LifetimeEpochMS, monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
-          ConnectionsOut = ?MAPS_PUT(Socket, ConnectionOut, Connections),
-          {Success, State#state{remaining_connections = Remaining - 1, busy = Busy + 1, connections = ConnectionsOut}};
-        Error ->
-          {Error, State#state{error_connect = State#state.error_connect + 1}}
-      end
+      %% We're going to update our state as if we opened the connection, but
+      %% we're going to leave the actual opening of the connection to the
+      %% client so that we don't block other requests.
+
+      LifetimeEpochMS = case MaxAgeMS of
+                          infinity -> infinity;
+                          _        -> JitterMS = case MaxJitterMS of 0 -> 0; _ -> rand:uniform(MaxJitterMS + 1) - 1 end,
+                                      now_ms(os:timestamp()) + MaxAgeMS + JitterMS
+                        end,
+      MonitorRef = monitor(process, CallerPid),
+      ConnectionOut = #connection{socket = MonitorRef, lifetime_epoch_ms = LifetimeEpochMS, monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
+      ConnectionsOut = ?MAPS_PUT(MonitorRef, ConnectionOut, Connections),
+      Reply = #open_start{reference = MonitorRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()},
+      {Reply, State#state{remaining_connections = Remaining - 1, busy = Busy + 1, connections = ConnectionsOut}}
+  end.
+
+-spec open_complete(#open_complete{}, #state{}) -> #state{}.
+open_complete (#open_complete{reference=Ref, socket=Socket}, State=#state{connections=Connections}) ->
+  Connection=#connection{monitor_ref=MonitorRef} = ?MAPS_GET(Ref, Connections),
+  ConnectionsOut0 = ?MAPS_REMOVE(Ref, Connections),
+  case Socket of
+    error ->
+      %% The open failed; remove the connection.
+      demonitor(MonitorRef, [ flush ]),
+      State#state{remaining_connections = State#state.remaining_connections + 1, busy = State#state.busy - 1,
+                  error_connect = State#state.error_connect + 1, connections = ConnectionsOut0};
+    _ ->
+      %% The open succeeded; update the socket in the connection.
+      ConnectionOut = Connection#connection{socket = Socket},
+      ConnectionsOut1 = ?MAPS_PUT(Socket, ConnectionOut, ConnectionsOut0),
+      State#state{connections = ConnectionsOut1}
   end.
 
 
--spec close(Socket::inet:socket(), CloseSocket, State::#state{}) -> #state{} when
+-spec close(Socket::inet:socket() | reference(), CloseSocket, State::#state{}) -> #state{} when
     CloseSocket :: 'close_local' | 'close_remote' | 'close_die' | 'do_not_close'.
-close (Socket, CloseSocket, State=#state{remaining_connections=Remaining, busy=Busy, connections=Connections}) when is_port(Socket) ->
-  CloseSocket =/= do_not_close andalso gen_tcp:close(Socket),
+close (Socket, CloseSocket, State=#state{remaining_connections=Remaining, busy=Busy, connections=Connections}) ->
+  %% The "Socket" may be a reference if it was being opened in the client.
+  CloseSocket =/= do_not_close andalso is_port(Socket) andalso gen_tcp:close(Socket),
   ConnectionsOut = ?MAPS_REMOVE(Socket, Connections),
   State#state{remaining_connections = Remaining + 1, busy = Busy - 1,
               close_local = increment_if_match(State#state.close_local, CloseSocket, close_local),
@@ -645,15 +692,15 @@ limit_test () ->
 
   ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2, error_pool_full = 0}, get_state(?TEST_ID)),
   {ok, Socket0} = checkout(?TEST_ID),
-  ?assertNot(is_tuple(Socket0)),
+  ?assert(is_port(Socket0)),
   {ok, Socket1} = checkout(?TEST_ID),
-  ?assertNot(is_tuple(Socket1)),
+  ?assert(is_port(Socket1)),
   ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, error_pool_full = 0}, get_state(?TEST_ID)),
   ?assertMatch({error, busy}, checkout(?TEST_ID)),
   ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, error_pool_full = 1}, get_state(?TEST_ID)),
   checkin(?TEST_ID, Socket0, ok),
   {ok, Socket2} = checkout(?TEST_ID),
-  ?assertNot(is_tuple(Socket2)),
+  ?assert(is_port(Socket2)),
   ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, error_pool_full = 1}, get_state(?TEST_ID)),
   checkin(?TEST_ID, Socket0, ok),
   checkin(?TEST_ID, Socket1, ok),
@@ -668,9 +715,9 @@ transfer_test () ->
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_connections, 2} ]}),
 
   {ok, Socket0} = checkout(?TEST_ID),
-  ?assertNot(is_tuple(Socket0)),
+  ?assert(is_port(Socket0)),
   {ok, Socket1} = checkout(?TEST_ID),
-  ?assertNot(is_tuple(Socket1)),
+  ?assert(is_port(Socket1)),
   ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0}, get_state(?TEST_ID)),
   ok = transfer(?TEST_ID, Socket1, self()),
   ?assertMatch(#state{idle = 0, busy = 1, remaining_connections = 1}, get_state(?TEST_ID)),
