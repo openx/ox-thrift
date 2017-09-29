@@ -1,13 +1,17 @@
 -ifndef(OX_THRIFT_INTERNAL_INCLUDED).
 -define(OX_THRIFT_INTERNAL_INCLUDED, true).
 
+-record(codec_config, {
+          map_module = 'dict' :: 'dict' | 'maps' }).
+-type codec_config() :: #codec_config{}.
+
 -record(ts_config, {
           service_module :: atom(),
           protocol_module :: atom(),
           handler_module :: atom(),
+          codec_config = #codec_config{} :: codec_config(),
           recv_timeout = 'infinity' :: non_neg_integer() | 'infinity',
           stats_module :: atom() }).
-
 
 -type message_type() :: 'call' | 'call_oneway' | 'reply_normal' | 'reply_exception' | 'exception'.
 

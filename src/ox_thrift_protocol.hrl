@@ -1,4 +1,4 @@
-%% Copyright 2016, OpenX.  All rights reserved.
+%% Copyright 2016-2017, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -include("ox_thrift_internal.hrl").
@@ -17,9 +17,12 @@
 encode_record ({Schema, StructName}, Record) when StructName =:= element(1, Record) ->
   iolist_to_binary(encode(Schema:struct_info(StructName), Record)).
 
-decode_record ({Schema, StructName}, Buffer) ->
-  {<<>>, Record} = decode_record(Buffer, StructName, Schema:struct_info(StructName)),
+decode_record ({Schema, StructName}, Buffer, CodecConfig) ->
+  {<<>>, Record} = decode_record(Buffer, StructName, Schema:struct_info(StructName), CodecConfig),
   Record.
+
+decode_record (SchemaAndStructName, Buffer) ->
+  decode_record(SchemaAndStructName, Buffer, #codec_config{}).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -237,10 +240,10 @@ encode_struct ([], _Record, _I, _LastId) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec decode_message(ServiceModule::atom(), Buffer::binary()) ->
+-spec decode_message(ServiceModule::atom(), codec_config(), Buffer::binary()) ->
                         {Function::atom(), MessageType::message_type(), Seqid::integer(), Args::term()}.
 %% `MessageType' is `?tMessageType_CALL', `?tMessageType_ONEWAY', `?tMessageReply', or `?tMessageException'.
-decode_message (ServiceModule, Buffer0) ->
+decode_message (ServiceModule, CodecConfig, Buffer0) ->
   {Buffer1, FunctionBin, ThriftMessageType, SeqId} =
     read_message_begin(Buffer0),
   Function = binary_to_atom(FunctionBin, latin1),
@@ -251,30 +254,30 @@ decode_message (ServiceModule, Buffer0) ->
                       _           -> call
                     end,
       MessageSpec = ServiceModule:function_info(Function, params_type),
-      {Buffer2, ArgsTuple} = decode_record(Buffer1, Function, MessageSpec),
+      {Buffer2, ArgsTuple} = decode_record(Buffer1, Function, MessageSpec, CodecConfig),
       [ _ | Args ] = tuple_to_list(ArgsTuple);
     ?tMessageType_ONEWAY ->
       MessageType = call_oneway,
-      MessageSpec = ServiceModule:function_info(Function, params_type),
-      {Buffer2, ArgsTuple} = decode_record(Buffer1, Function, MessageSpec),
+      MessageSpec = ServiceModule:function_info(Function, params_type, CodecConfig),
+      {Buffer2, ArgsTuple} = decode_record(Buffer1, Function, MessageSpec, CodecConfig),
       [ _ | Args ] = tuple_to_list(ArgsTuple);
     ?tMessageType_REPLY ->
       MessageSpec = ServiceModule:function_info(Function, reply_type),
-      {Buffer2, {_, Args}, MessageType} = decode_reply(Buffer1, ServiceModule, Function, MessageSpec);
+      {Buffer2, {_, Args}, MessageType} = decode_reply(Buffer1, ServiceModule, Function, MessageSpec, CodecConfig);
     ?tMessageType_EXCEPTION ->
       MessageType = exception,
       MessageSpec = ?tApplicationException_Structure,
-      {Buffer2, Args} = decode_record(Buffer1, application_exception, MessageSpec)
+      {Buffer2, Args} = decode_record(Buffer1, application_exception, MessageSpec, CodecConfig)
   end,
   <<>> = Buffer2,
   %% io:format(standard_error, "decode\nspec ~p\nargs ~p\n", [ MessageSpec, Args ]),
   {Function, MessageType, SeqId, Args}.
 
 
-decode_reply (Buffer0, ServiceModule, Function, ReplySpec) ->
+decode_reply (Buffer0, ServiceModule, Function, ReplySpec, CodecConfig) ->
   {struct, ExceptionDef} = ServiceModule:function_info(Function, exceptions),
   MessageSpec = {struct, [ {?SUCCESS_FIELD_ID, ReplySpec} | ExceptionDef ]},
-  {Buffer1, ArgsTuple} = decode_record(Buffer0, Function, MessageSpec),
+  {Buffer1, ArgsTuple} = decode_record(Buffer0, Function, MessageSpec, CodecConfig),
   [ F, Reply | Exceptions ] = tuple_to_list(ArgsTuple),
   %% Check for an exception.
   case first_defined(Exceptions)of
@@ -287,19 +290,19 @@ decode_reply (Buffer0, ServiceModule, Function, ReplySpec) ->
   end.
 
 
--spec decode(BufferIn::binary(), Spec::term()) -> {BufferOut::binary(), Decoded::term()}.
-decode (Buffer, {struct, {Schema, StructName}})
+-spec decode(BufferIn::binary(), Spec::term(), codec_config()) -> {BufferOut::binary(), Decoded::term()}.
+decode (Buffer, {struct, {Schema, StructName}}, CodecConfig)
   when is_atom(Schema), is_atom(StructName) ->
   %% Decode a record from a schema module.
-  decode_record(Buffer, StructName, Schema:struct_info(StructName));
+  decode_record(Buffer, StructName, Schema:struct_info(StructName), CodecConfig);
 
-decode (Buffer0, _T={list, Type}) ->
+decode (Buffer0, _T={list, Type}, CodecConfig) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
-  {Buffer2, List} = decode_list(Buffer1, Type, [], Size),
+  {Buffer2, List} = decode_list(Buffer1, Type, CodecConfig, [], Size),
   {Buffer2, List};
 
-decode (Buffer0, _T={map, KeyType, ValType}) ->
+decode (Buffer0, _T={map, KeyType, ValType}, CodecConfig=#codec_config{map_module=MapModule}) ->
   {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
   if ?THRIFT_PROTOCOL =/= compact orelse Size =/= 0 ->
       %% Types are not sent on wire for compact if size is 0.
@@ -307,33 +310,33 @@ decode (Buffer0, _T={map, KeyType, ValType}) ->
       ?VALIDATE_TYPE(ValType, VType, [ Buffer0, _T ]);
      true -> ok
   end,
-  {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, [], Size),
-  {Buffer2, dict:from_list(List)};
+  {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, CodecConfig, [], Size),
+  {Buffer2, MapModule:from_list(List)};
 
-decode (Buffer0, _T={set, Type}) ->
+decode (Buffer0, _T={set, Type}, CodecConfig) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
-  {Buffer2, List} = decode_set(Buffer1, Type, [], Size),
+  {Buffer2, List} = decode_set(Buffer1, Type, CodecConfig, [], Size),
   {Buffer2, sets:from_list(List)};
 
-decode (Buffer0, Type) when is_atom(Type) ->
+decode (Buffer0, Type, _) when is_atom(Type) ->
   %% Decode the basic types.
   read(Buffer0, Type).
 
 
--spec decode_record(BufferIn::binary(), Name::atom(), tuple()) -> {binary(), tuple()}.
-decode_record (Buffer0, Name, {struct, StructDef})
+-spec decode_record(BufferIn::binary(), Name::atom(), tuple(), codec_config()) -> {binary(), tuple()}.
+decode_record (Buffer0, Name, {struct, StructDef}, CodecConfig)
   when is_atom(Name), is_list(StructDef) ->
   %% Decode a record from a struct definition.
   %% If we were going to handle field defaults we could create the initialize
   %% here.  It might be better to wait until after the struct is parsed,
   %% however, to avoid unnecessarily creating initializers for fields that
   %% don't need them. @@
-  decode_struct(Buffer0, StructDef, [ {1, Name} ], 0).
+  decode_struct(Buffer0, StructDef, CodecConfig, [ {1, Name} ], 0).
 
 
--spec decode_struct(BufferIn::binary(), FieldList::list(), Acc::list(), LastId::integer()) -> {binary(), tuple()}.
-decode_struct (Buffer0, FieldList, Acc, LastId) ->
+-spec decode_struct(BufferIn::binary(), FieldList::list(), codec_config(), Acc::list(), LastId::integer()) -> {binary(), tuple()}.
+decode_struct (Buffer0, FieldList, CodecConfig, Acc, LastId) ->
   {Buffer1, FieldType, FieldId} = read_field_begin(Buffer0, LastId),
   case FieldType of
     field_stop ->
@@ -348,9 +351,9 @@ decode_struct (Buffer0, FieldList, Acc, LastId) ->
                 {Buffer1, FieldType};
                true ->
                 ?VALIDATE_TYPE(FieldTypeAtom, FieldType, [ Buffer0, FieldList, Acc, LastId ]),
-                decode(Buffer1, FieldTypeAtom)
+                decode(Buffer1, FieldTypeAtom, CodecConfig)
             end,
-          decode_struct(Buffer2, FieldList, [ {N, Val} | Acc ], FieldId);
+          decode_struct(Buffer2, FieldList, CodecConfig, [ {N, Val} | Acc ], FieldId);
         false ->
           %% io:format("field ~p not found in ~p\n", [ FieldId, FieldList ]),
           Buffer2 = if ?THRIFT_PROTOCOL =:= compact andalso is_boolean(FieldType) ->
@@ -358,31 +361,31 @@ decode_struct (Buffer0, FieldList, Acc, LastId) ->
                        true ->
                         skip(Buffer1, FieldType)
                     end,
-          decode_struct(Buffer2, FieldList, Acc, FieldId)
+          decode_struct(Buffer2, FieldList, CodecConfig, Acc, FieldId)
       end
   end.
 
 
--spec decode_list(IBuffer::binary(), EType::struct_type(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
-decode_list (Buffer, _, Acc, 0) -> {Buffer, lists:reverse(Acc)};
-decode_list (Buffer0, EType, Acc, N) ->
-  {Buffer1, Elt} = decode(Buffer0, EType),
-  decode_list(Buffer1, EType, [ Elt | Acc ], N - 1).
+-spec decode_list(IBuffer::binary(), EType::struct_type(), codec_config(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+decode_list (Buffer, _, _, Acc, 0) -> {Buffer, lists:reverse(Acc)};
+decode_list (Buffer0, EType, CodecConfig, Acc, N) ->
+  {Buffer1, Elt} = decode(Buffer0, EType, CodecConfig),
+  decode_list(Buffer1, EType, CodecConfig, [ Elt | Acc ], N - 1).
 
 
--spec decode_map(IBuffer::binary(), {KType::struct_type(), VType::struct_type()}, Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
-decode_map (Buffer, _, Acc, 0) -> {Buffer, Acc};
-decode_map (Buffer0, Types={KType, VType}, Acc, N) ->
-  {Buffer1, K} = decode(Buffer0, KType),
-  {Buffer2, V} = decode(Buffer1, VType),
-  decode_map(Buffer2, Types, [ {K, V} | Acc ], N - 1).
+-spec decode_map(IBuffer::binary(), {KType::struct_type(), VType::struct_type()}, codec_config(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+decode_map (Buffer, _, _, Acc, 0) -> {Buffer, Acc};
+decode_map (Buffer0, Types={KType, VType}, CodecConfig, Acc, N) ->
+  {Buffer1, K} = decode(Buffer0, KType, CodecConfig),
+  {Buffer2, V} = decode(Buffer1, VType, CodecConfig),
+  decode_map(Buffer2, Types, CodecConfig, [ {K, V} | Acc ], N - 1).
 
 
--spec decode_set(IBuffer::binary(), EType::struct_type(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
-decode_set (Buffer, _, Acc, 0) -> {Buffer, Acc};
-decode_set (Buffer0, EType, Acc, N) ->
-  {Buffer1, Elt} = decode(Buffer0, EType),
-  decode_set(Buffer1, EType, [ Elt | Acc ], N - 1).
+-spec decode_set(IBuffer::binary(), EType::struct_type(), codec_config(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
+decode_set (Buffer, _, _, Acc, 0) -> {Buffer, Acc};
+decode_set (Buffer0, EType, CodecConfig, Acc, N) ->
+  {Buffer1, Elt} = decode(Buffer0, EType, CodecConfig),
+  decode_set(Buffer1, EType, CodecConfig, [ Elt | Acc ], N - 1).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -394,22 +397,22 @@ skip (Buffer0, struct) ->
 skip (Buffer0, list) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   foldn(fun (BufferL0) ->
-            {BufferL1, _} = decode(BufferL0, EType),
+            {BufferL1, _} = decode(BufferL0, EType, #codec_config{}),
             BufferL1
         end, Buffer1, Size);
 
 skip (Buffer0, map) ->
   {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
   foldn(fun (BufferL0) ->
-            {BufferL1, _} = decode(BufferL0, KType),
-            {BufferL2, _} = decode(BufferL1, VType),
+            {BufferL1, _} = decode(BufferL0, KType, #codec_config{}),
+            {BufferL2, _} = decode(BufferL1, VType, #codec_config{}),
             BufferL2
         end, Buffer1, Size);
 
 skip (Buffer0, set) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   foldn(fun (BufferL0) ->
-            {BufferL1, _} = decode(BufferL0, EType),
+            {BufferL1, _} = decode(BufferL0, EType, #codec_config{}),
             BufferL1
         end, Buffer1, Size);
 

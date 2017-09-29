@@ -1,4 +1,4 @@
-%% Copyright 2016, 2017 OpenX.  All rights reserved.
+%% Copyright 2016-2017 OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_client).
@@ -18,6 +18,7 @@
           transport_module = error({required, transport_module}) :: atom(),
           protocol_module = error({required, protocol_module}) :: atom(),
           service_module = error({required, service_module}) :: atom(),
+          codec_config = #codec_config{} :: codec_config(),
           seqid = 0 :: integer(),
           recv_timeout = 'infinity' :: non_neg_integer() | 'infinity' }).
 -type ox_thrift_client() :: #ox_thrift_client{}.
@@ -45,8 +46,11 @@ new (Connection, ConnectionState, Transport, Protocol, Service) ->
 %% * Service: A module, produced by the Thrift IDL compiler from the
 %%   service's Thrift definition, that provides the Service layer.
 %% * Options: A list of options.
+%%     * `{map_module, MapModule}' where `MapModule' is `dict' (the default)
+%%        or `maps'.
 %%     * `{recv_timeout, Milliseconds}' or `{recv_timeout, infinity}' The
 %%        receive timeout.  The default is `infinity'.
+
 new (Connection, ConnectionState, Transport, Protocol, Service, Options)
   when is_atom(Connection), is_atom(Transport), is_atom(Protocol), is_atom(Service) ->
   Client0 = #ox_thrift_client{
@@ -59,6 +63,9 @@ new (Connection, ConnectionState, Transport, Protocol, Service, Options)
   {ok, Client1}.
 
 
+parse_options ([ {map_module, MapModule} | Options ], Client=#ox_thrift_client{codec_config=CodecConfig})
+  when MapModule =:= 'dict'; MapModule =:= 'maps' ->
+  parse_options(Options, Client#ox_thrift_client{codec_config = CodecConfig#codec_config{map_module = MapModule}});
 parse_options([ {recv_timeout, RecvTimeout} | Options ], Client)
   when (is_integer(RecvTimeout) andalso RecvTimeout >= 0) orelse (RecvTimeout =:= infinity) ->
   parse_options(Options, Client#ox_thrift_client{recv_timeout = RecvTimeout});
@@ -148,8 +155,8 @@ call3 (Client=#ox_thrift_client{transport_module=Transport, recv_timeout=RecvTim
   end.
 
 %% Parses the response data and returns the reply.
-call4 (Client=#ox_thrift_client{protocol_module=Protocol, service_module=Service, seqid=InSeqId}, Socket, ReplyData) ->
-  {_Function, MessageType, SeqId, Reply} = Protocol:decode_message(Service, ReplyData),
+call4 (Client=#ox_thrift_client{protocol_module=Protocol, service_module=Service, codec_config=CodecConfig, seqid=InSeqId}, Socket, ReplyData) ->
+  {_Function, MessageType, SeqId, Reply} = Protocol:decode_message(Service, CodecConfig, ReplyData),
   if SeqId =/= InSeqId               -> {error, checkin(Client, Socket, error), application_exception_seqid(InSeqId, SeqId)};
      MessageType =:= reply_normal    -> {ok, checkin(Client, Socket, ok), Reply};
      MessageType =:= reply_exception -> {throw, checkin(Client, Socket, ok), Reply};

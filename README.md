@@ -28,8 +28,8 @@ the Apache Thrift Erlang library.
 
 * For the Thrift `map` type, for encoding OX Thrift will accept either
   a dict (as Apache Thrift does), a proplist, or an Erlang map.  For
-  decoding, however, OX Thrift always returns a dict (as Apache Thrift
-  does).
+  decoding, however, OX Thrift can be configured to return a dict or a
+  map.  See the documentation for the `map_module` option.
 
 * Like the Apache library, OX Thrift does not enforce required struct
   fields, on either encoding or decoding.
@@ -66,8 +66,11 @@ module.  This module exports two functions, `new`, and `call`.
 * Service: A module, produced by the Thrift IDL compiler from the
   service's Thrift definition, that provides the Service layer.
 * Options: A list of options.
-    * `{recv_timeout, Milliseconds}` or `{recv_timeout, infinity}` The
-       receive timeout.  The default is `infinity`.
+  * `{map_module, MapModule}` where `MapModule` is `dict` or `maps`
+    specifies the module that is used to decode Thrift `map` fields.
+    The default is `dict`.
+  * `{recv_timeout, Milliseconds}` or `{recv_timeout, infinity}` The
+    receive timeout.  The default is `infinity`.
 
 The Connection module's `checkout` function should return a socket
 Socket, and the OX Thrift library expects the Transport module to
@@ -165,6 +168,16 @@ one of the following values.
 * `ox_thrift_protocol_binary`: binary protocol
 * `ox_thrift_protocol_compact`: compact protocol
 
+#### Thrift `map` Field Decoding
+
+By default, Thrift `map` fields are decoded to Erlang `dict`s.  You
+can specify that they be decoded as Erlang `maps` with the
+`map_module` option.
+
+``` erlang
+#ox_thrift_config{options = [ { map_module, maps } ]}
+```
+
 #### Setting the Server's `recv` Timeout
 
 The default `recv` timeout is `infinity`, which means that the server
@@ -173,7 +186,6 @@ request.  You can override this with the `recv_timeout` option.
 
 ``` erlang
 #ox_thrift_config{options = [ { recv_timeout, TimeoutMilliseconds } ]}
-
 ```
 
 #### Stats Collection

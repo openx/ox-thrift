@@ -1,3 +1,7 @@
+* Fri Sep 29 2017 David Hull <david.hull@openx.com> 0.9.0
+- Add the map_module option to allow user to specify whether map
+  fields should be returned as an Erlang dict or a map.
+
 * Thu Mar 23 2017 David Hull <david.hull@openx.com> 0.8.0
 - Rework thrift client connection handling.
 - The thrift client now returns an error tuple to indicate an error

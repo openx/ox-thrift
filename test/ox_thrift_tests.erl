@@ -1,4 +1,4 @@
-%% Copyright 2016, OpenX.  All rights reserved.
+%% Copyright 2016-2017, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_tests).
@@ -35,12 +35,14 @@ destroy_client_direct (Client) ->
 -define(PORT, 8024).
 -define(PROTOCOL, ox_thrift_protocol_binary).
 
-new_client_socket () ->
+new_client_socket () -> new_client_socket(dict).
+
+new_client_socket (MapModule) ->
   create_stats_table(),
   socket_transport:start_server(?PORT, ?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
   ConnectionState = ox_thrift_reconnecting_socket:new({?LOCALHOST, ?PORT}),
   {ok, Client} = ox_thrift_client:new(ox_thrift_reconnecting_socket, ConnectionState, socket_transport, ?PROTOCOL, ?SERVICE,
-                                      [ {recv_timeout, ?RECV_TIMEOUT_CLIENT} ]),
+                                      [ {map_module, MapModule}, {recv_timeout, ?RECV_TIMEOUT_CLIENT} ]),
   Client.
 
 destroy_client_socket (Client) ->
@@ -84,13 +86,18 @@ destroy_stats_table () ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 direct_binary_test_ () ->
-  make_tests(direct, fun () -> new_client_direct(ox_thrift_protocol_binary) end, fun destroy_client_direct/1).
+  make_tests(direct, dict, fun () -> new_client_direct(ox_thrift_protocol_binary) end, fun destroy_client_direct/1).
 
 direct_compact_test_ () ->
-  make_tests(direct, fun () -> new_client_direct(ox_thrift_protocol_compact) end, fun destroy_client_direct/1).
+  make_tests(direct, dict, fun () -> new_client_direct(ox_thrift_protocol_compact) end, fun destroy_client_direct/1).
 
-socket_test_ () ->
-  make_tests(socket, fun new_client_socket/0, fun destroy_client_socket/1).
+socket_dict_test_ () ->
+  make_tests(socket, dict, fun () -> new_client_socket(dict) end, fun destroy_client_socket/1).
+
+-ifndef(OXTHRIFT_NO_MAPS).
+socket_maps_test_ () ->
+  make_tests(socket, maps, fun () -> new_client_socket(maps) end, fun destroy_client_socket/1).
+-endif. %% not OXTHRIFT_NO_MAPS
 
 timeout_server_test () ->
   Client0 = new_client_socket(),
@@ -123,9 +130,9 @@ skip_test () ->
   , skip_test(ox_thrift_protocol_compact)
   ].
 
--define(F(TestName), fun () -> TestName(TestType, NewClient, DestroyClient) end).
+-define(F(TestName), fun () -> TestName(TestType, MapModule, NewClient, DestroyClient) end).
 
-make_tests (TestType, NewClient, DestroyClient) ->
+make_tests (TestType, MapModule, NewClient, DestroyClient) ->
   [ ?F(add_one_test)
   , ?F(sum_ints_test)
   , ?F(all_types_test)
@@ -137,7 +144,7 @@ make_tests (TestType, NewClient, DestroyClient) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-add_one_test (TestType, NewClientFun, DestroyClientFun) ->
+add_one_test (TestType, _MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
   {ok, Client1, Reply1} = ox_thrift_client:call(Client0, add_one, [ 99 ]),
@@ -163,7 +170,7 @@ add_one_test (TestType, NewClientFun, DestroyClientFun) ->
   TestType =:= socket andalso
     %% The direct tests don't generate call_count and connect_time stats.
     begin
-      ?assertMatch([ {call_count, 2} ],
+      ?assertMatch([ {call_count, CallCount} ] when CallCount >= 2,
                    ets:lookup(?STATS_TABLE, call_count)),
 
       ?assertMatch([ {connect_time, ConnectMillis} ] when ConnectMillis > 0,
@@ -173,7 +180,7 @@ add_one_test (TestType, NewClientFun, DestroyClientFun) ->
   DestroyClientFun(Client2).
 
 
-sum_ints_test (_TestType, NewClientFun, DestroyClientFun) ->
+sum_ints_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
   {ok, Client1, Reply1} =
@@ -192,7 +199,7 @@ sum_ints_test (_TestType, NewClientFun, DestroyClientFun) ->
   DestroyClientFun(Client2).
 
 
-all_types_test (_TestType, NewClientFun, DestroyClientFun) ->
+all_types_test (_TestType, MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
   V1 = #'AllTypes'{
@@ -205,7 +212,7 @@ all_types_test (_TestType, NewClientFun, DestroyClientFun) ->
           string_field = <<"xyzzy">>,
           int_list = [ 1, 2, 3 ],
           string_set = sets:from_list([ <<"a">>, <<"bb">>, <<"ccc">> ]),
-          string_int_map = dict:from_list([ {<<"I">>, 1}, {<<"V">>, 5}, {<<"X">>, 10} ]),
+          string_int_map = MapModule:from_list([ {<<"I">>, 1}, {<<"V">>, 5}, {<<"X">>, 10} ]),
           bool_list = [ true, true, false, true ],
           byte_list = [], %% empty list
           double_list = [ 1.0, -2.0 ],
@@ -231,7 +238,7 @@ is_open (Client) ->
   ConnectionModule:is_open(ox_thrift_client:get_connection_state(Client)).
 
 
-throw_exception_test (_TestType, NewClientFun, DestroyClientFun) ->
+throw_exception_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
   {ok, Client1, Reply1} = ox_thrift_client:call(Client0, throw_exception, [ ?TEST_THROWTYPE_NORMALRETURN ]),
@@ -261,7 +268,7 @@ throw_exception_test (_TestType, NewClientFun, DestroyClientFun) ->
   DestroyClientFun(Client4).
 
 
-cast_test (_TestType, NewClientFun, DestroyClientFun) ->
+cast_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
   {ok, Client1, Reply1} = ox_thrift_client:call(Client0, cast, [ <<"hello world">> ]),
@@ -271,13 +278,13 @@ cast_test (_TestType, NewClientFun, DestroyClientFun) ->
   DestroyClientFun(Client1).
 
 
-proplist_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
+proplist_as_map_test (_TestType, MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
   PL0 = [ {1, <<"one">>}, {2, <<"two">>} ],
   PL1 = lists:map(fun ({K, V}) -> {V, K} end, PL0),
-  D0 = dict:from_list(PL0),
-  D1 = dict:from_list(PL1),
+  D0 = MapModule:from_list(PL0),
+  D1 = MapModule:from_list(PL1),
 
   {ok, Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNDICT, PL0 ]),
   ?assertEqual(D1, Reply1),
@@ -295,15 +302,15 @@ proplist_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
 
 
 -ifdef(OXTHRIFT_NO_MAPS).
-map_as_map_test (_TestType, NewClientFun, DestroyClientFun) -> ok.
+map_as_map_test (_TestType, _MapModule, _NewClientFun, _DestroyClientFun) -> ok.
 -else. %% ! OXTHRIFT_NO_MAPS
-map_as_map_test (_TestType, NewClientFun, DestroyClientFun) ->
+map_as_map_test (_TestType, MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
   PL0 = [ {1, <<"one">>}, {2, <<"two">>} ],
   PL1 = lists:map(fun ({K, V}) -> {V, K} end, PL0),
   M0 = maps:from_list(PL0),
-  D1 = dict:from_list(PL1),
+  D1 = MapModule:from_list(PL1),
 
   {ok, Client1, Reply1} = ox_thrift_client:call(Client0, swapkv, [ ?TEST_MAPRET_RETURNMAP, M0 ]),
   ?assertEqual(D1, Reply1),

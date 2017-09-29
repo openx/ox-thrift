@@ -1,4 +1,4 @@
-%% Copyright 2016, 2017 OpenX.  All rights reserved.
+%% Copyright 2016-2017 OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_server).
@@ -55,6 +55,9 @@ parse_config (#ox_thrift_config{service_module=ServiceModule, protocol_module=Pr
 parse_options ([ {recv_timeout, RecvTimeout} | Options ], Config)
   when (is_integer(RecvTimeout) andalso RecvTimeout >= 0) orelse (RecvTimeout =:= infinity) ->
   parse_options(Options, Config#ts_config{recv_timeout = RecvTimeout});
+parse_options ([ {map_module, MapModule} | Options ], Config=#ts_config{codec_config=CodecConfig})
+  when MapModule =:= 'dict'; MapModule =:= 'maps' ->
+  parse_options(Options, Config#ts_config{codec_config = CodecConfig#codec_config{map_module = MapModule}});
 parse_options ([ {stats_module, StatsModule} | Options ], Config) when is_atom(StatsModule) ->
   parse_options(Options, Config#ts_config{stats_module = StatsModule});
 parse_options ([], Config) ->
@@ -163,9 +166,9 @@ handle_error (State=#ts_state{socket=Socket, transport=Transport, config=#ts_con
 
 
 -spec decode(Config::#ts_config{}, ProtocolModule::atom(), RequestData::binary()) -> Result::tuple().
-decode (#ts_config{service_module=ServiceModule, stats_module=StatsModule}, ProtocolModule, RequestData) ->
+decode (#ts_config{service_module=ServiceModule, codec_config=CodecConfig, stats_module=StatsModule}, ProtocolModule, RequestData) ->
   Stats0 = collect_stats(StatsModule),
-  Result = ProtocolModule:decode_message(ServiceModule, RequestData),
+  Result = ProtocolModule:decode_message(ServiceModule, CodecConfig, RequestData),
   case Stats0 of
     undefined -> ok;
     {TS0, Reductions0} ->

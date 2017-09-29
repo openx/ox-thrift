@@ -1,4 +1,4 @@
-%% Copyright 2016, OpenX.  All rights reserved.
+%% Copyright 2016-2017, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_protocol_compact).
@@ -11,9 +11,9 @@
 
 -include("ox_thrift_internal.hrl").
 
--export([ encode_call/4, encode_message/5, decode_message/2 ]).
+-export([ encode_call/4, encode_message/5, decode_message/3 ]).
 
--export([ encode_record/2, decode_record/2 ]).
+-export([ encode_record/2, decode_record/2, decode_record/3 ]).
 
 -define(THRIFT_PROTOCOL, compact).
 -include("ox_thrift_protocol.hrl").
