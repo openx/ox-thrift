@@ -1,3 +1,6 @@
+* Mon Nov 27 2017 Kenan Gillet <kenan.gillet@openx.com> 0.10.0
+- Expose pool statistics for ox_thrift_socket_pool
+
 * Fri Sep 29 2017 David Hull <david.hull@openx.com> 0.9.0
 - Add the map_module option to allow user to specify whether map
   fields should be returned as an Erlang dict or a map.

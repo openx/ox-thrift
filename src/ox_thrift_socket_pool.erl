@@ -16,7 +16,7 @@
 -behaviour(gen_server).
 -behaviour(ox_thrift_connection).
 
--export([ start_link/4, transfer/3 ]).                  % API.
+-export([ start_link/4, transfer/3, stats/1 ]).         % API.
 -export([ new/1, destroy/1, checkout/1, checkin/3 ]).   % ox_thrift_connection callbacks.
 -export([ init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3 ]). % gen_server callbacks.
 -export([ get_state/1, get_connection/2 ]).             % Debugging.
@@ -74,6 +74,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           remaining_connections = ?INFINITY :: non_neg_integer(),
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
+          unavailable = 0 :: non_neg_integer(),
           idle_queue = undefined :: ?QUEUE_TYPE | 'undefined',
           connections = undefined :: map_type() | 'undefined'}).
 
@@ -120,6 +121,15 @@ start_link (Id, Host, Port, Options) ->
 transfer (Id, Socket, NewOwner) ->
   gen_server:call(Id, {transfer, Socket, NewOwner}).
 
+%% @doc Returns stats as a proplist
+%% `idle` the number of idle connections
+%% `busy` the number of busy connections
+%% `unavailable` the number of time the pool failed to provide a connection
+%%               either because the connection failed or
+%%               `max_connections` limit has been reached
+-spec stats(Id::atom()) -> list({atom(), integer()}).
+stats (Id) ->
+  gen_server:call(Id, stats).
 
 -record(connection, {
           socket = error({required, socket}) :: inet:socket(),
@@ -220,6 +230,12 @@ handle_call ({get_connection, Socket}, _From, State=#state{connections=Connectio
   {reply, Connection, State};
 handle_call (stop, _From, State) ->
   {stop, normal, ok, State};
+%% returns idle/busy/unavailable stats
+handle_call (stats, _From, State=#state{idle=Idle, busy=Busy, unavailable=Unavailable}) ->
+    {reply, [{idle, Idle},
+             {unavailable, Unavailable},
+             {busy, Busy}],
+            State};
 %% Transfers control of a checked-out socket to a new owner.
 handle_call ({transfer, Socket, NewOwner}, _From, State=#state{connections=Connections}) ->
   %% Stop monitoring the process that checked the socket out, so we won't
@@ -299,7 +315,7 @@ put_idle (Socket, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue}) ->
 -spec open(CallerPid::pid(), State::#state{}) -> {({'ok', Socket::inet:socket()} | {'error', Reason::term()}), #state{}}.
 open (CallerPid, State) ->
   case State of
-    #state{remaining_connections=0} -> {{error, busy}, State};
+    #state{remaining_connections=0} -> {{error, busy}, State#state{unavailable=State#state.unavailable + 1}};
     #state{remaining_connections=Remaining, busy=Busy,
            host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS,
            connections = Connections}
@@ -315,7 +331,7 @@ open (CallerPid, State) ->
           ConnectionsOut = ?MAPS_PUT(Socket, ConnectionOut, Connections),
           {Success, State#state{remaining_connections = Remaining - 1, busy = Busy + 1, connections = ConnectionsOut}};
         Error ->
-          {Error, State}
+          {Error, State#state{unavailable=State#state.unavailable + 1}}
       end
   end.
 
