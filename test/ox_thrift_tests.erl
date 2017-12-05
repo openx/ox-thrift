@@ -271,11 +271,16 @@ throw_exception_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
 cast_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
-  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, cast, [ <<"hello world">> ]),
+  Message = <<"hello, world">>,
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, put, [ Message ]),
   %% ?assertNotEqual(undefined, ox_thrift_client:get_socket(Client1)), FIXME
   ?assertEqual(ok, Reply1),
 
-  DestroyClientFun(Client1).
+  {ok, Client2, Reply2} = ox_thrift_client:call(Client1, get, []),
+
+  ?assertEqual(Message, Reply2),
+
+  DestroyClientFun(Client2).
 
 
 proplist_as_map_test (_TestType, MapModule, NewClientFun, DestroyClientFun) ->
@@ -357,7 +362,8 @@ handle_function (Function, Args) ->
   case Function of
     add_one -> [ In ] = Args, {reply, In + 1};
     wait    -> [ Milliseconds ] = Args, timer:sleep(Milliseconds), ok;
-    cast    -> [ Message ] = Args, io:format("~p\n", [ Message ]), ok;
+    put     -> [ Message ] = Args, io:format("~p\n", [ Message ]), put(message, Message), ok;
+    get     -> {reply, get(message)};
     swapkv  -> [ RetType, Dict ] = Args,
                Proplist = dict:fold(fun (K, V, Acc) -> [ {V, K} | Acc ] end, [], Dict),
                Reply = case RetType of

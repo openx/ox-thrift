@@ -4,6 +4,7 @@
 %% DO NOT EDIT UNLESS YOU ARE SURE THAT YOU KNOW WHAT YOU ARE DOING
 %%
 
+-module(skip_constants).
 
--include("test_types.hrl").
+-include("skip_types.hrl").
 

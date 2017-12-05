@@ -71,7 +71,9 @@ service SkipService {
 
   void wait(1: i32 milliseconds)
 
-  oneway void cast(1: string message)
+  oneway void put(1: string message)
+
+  string get()
 
   map<string,i32> swapkv(1: MapRet return_type, 2: map<i32,string> input)
 
