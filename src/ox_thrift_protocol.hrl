@@ -258,7 +258,7 @@ decode_message (ServiceModule, CodecConfig, Buffer0) ->
       [ _ | Args ] = tuple_to_list(ArgsTuple);
     ?tMessageType_ONEWAY ->
       MessageType = call_oneway,
-      MessageSpec = ServiceModule:function_info(Function, params_type, CodecConfig),
+      MessageSpec = ServiceModule:function_info(Function, params_type),
       {Buffer2, ArgsTuple} = decode_record(Buffer1, Function, MessageSpec, CodecConfig),
       [ _ | Args ] = tuple_to_list(ArgsTuple);
     ?tMessageType_REPLY ->
