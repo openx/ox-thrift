@@ -1,4 +1,4 @@
-%% Copyright 2016-2017 OpenX.  All rights reserved.
+%% Copyright 2016-2018 OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_client).
@@ -22,6 +22,8 @@
           seqid = 0 :: integer(),
           recv_timeout = 'infinity' :: non_neg_integer() | 'infinity' }).
 -type ox_thrift_client() :: #ox_thrift_client{}.
+
+-define(REASON_IS_CLOSED(Error), (Error =:= closed orelse Error =:= enotconn)).
 
 
 new (Connection, ConnectionState, Transport, Protocol, Service) ->
@@ -129,7 +131,8 @@ call2 (Client=#ox_thrift_client{transport_module=Transport}, CallType, RequestMs
   Length = iolist_size(RequestMsg),
   case Transport:send(Socket, [ <<Length:32/big-signed>>, RequestMsg ]) of
     ok              -> call3(Client, CallType, RequestMsg, Socket, TriesLeft);
-    {error, closed} -> call1(checkin(Client, Socket, closed), CallType, RequestMsg, TriesLeft - 1);
+    {error, Closed} when ?REASON_IS_CLOSED(Closed)
+                    -> call1(checkin(Client, Socket, closed), CallType, RequestMsg, TriesLeft - 1);
     {error, Reason} -> {error, checkin(Client, Socket, error), Reason}
   end.
 
@@ -150,8 +153,9 @@ call3 (Client=#ox_thrift_client{transport_module=Transport, recv_timeout=RecvTim
       end;
     %% If the remote end has closed its end of the socket even before we send,
     %% we may discover that only when we try to read data.
-    {error, closed}           -> call1(checkin(Client, Socket, closed), call, RequestMsg, TriesLeft - 1);
-    {error, ReasonRecvLength} -> {error, checkin(Client, Socket, error), ReasonRecvLength}
+    {error, Closed} when ?REASON_IS_CLOSED(Closed)
+                                -> call1(checkin(Client, Socket, closed), call, RequestMsg, TriesLeft - 1);
+    {error, ReasonRecvLength}   -> {error, checkin(Client, Socket, error), ReasonRecvLength}
   end.
 
 %% Parses the response data and returns the reply.
