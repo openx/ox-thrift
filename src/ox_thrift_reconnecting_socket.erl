@@ -1,4 +1,4 @@
-%% Copyright 2016, 2017, OpenX.  All rights reserved.
+%% Copyright 2016-2018, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_reconnecting_socket).
@@ -41,7 +41,8 @@ checkout (State=#state{host=Host, port=Port}) ->
 checkin (State, Socket, Status) ->
   case Status of
     ok    -> State#state{socket = Socket};
-    close -> State#state{socket = undefined}
+    close -> is_port(Socket) andalso gen_tcp:close(Socket),
+             State#state{socket = undefined}
   end.
 
 %% For unit test.
