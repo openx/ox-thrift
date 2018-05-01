@@ -12,6 +12,8 @@
 -define(MAP_SIZE(Term), map_size(Term)).
 -endif.
 
+-dialyer({no_match, [ encode_struct/4, decode/3, decode_struct/5, skip_struct/2 ]}).
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 encode_record ({Schema, StructName}, Record) when StructName =:= element(1, Record) ->
