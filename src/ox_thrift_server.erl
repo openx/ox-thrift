@@ -58,21 +58,26 @@ parse_options ([ {recv_timeout, RecvTimeout} | Options ], Config)
 parse_options ([ {map_module, MapModule} | Options ], Config=#ts_config{codec_config=CodecConfig})
   when MapModule =:= 'dict'; MapModule =:= 'maps' ->
   parse_options(Options, Config#ts_config{codec_config = CodecConfig#codec_config{map_module = MapModule}});
+parse_options ([ {max_message_size, MaxMessageSize} | Options ], Config)
+  when (is_integer(MaxMessageSize) andalso MaxMessageSize > 0) orelse (MaxMessageSize =:= infinity) ->
+  parse_options(Options, Config#ts_config{max_message_size = MaxMessageSize});
 parse_options ([ {stats_module, StatsModule} | Options ], Config) when is_atom(StatsModule) ->
   parse_options(Options, Config#ts_config{stats_module = StatsModule});
 parse_options ([], Config) ->
   Config.
 
 
-loop (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{recv_timeout=RecvTimeout}}) ->
+loop (State=#ts_state{socket=Socket, transport=Transport,
+                      config=#ts_config{recv_timeout=RecvTimeout, max_message_size=MaxMessageSize}}) ->
   %% Implement thrift_framed_transport.
 
   %% Read the length, and then the request data.
   %% Result0 will be `{ok, Packet}' or `{error, Reason}'.
   case Transport:recv(Socket, 4, RecvTimeout) of
-    {ok, LengthBin} ->
-      <<Length:32/integer-signed-big>> = LengthBin,
+    {ok, <<Length:32/integer-signed-big>>} when MaxMessageSize =:= infinity; Length =< MaxMessageSize ->
       loop1(State#ts_state{call_count = State#ts_state.call_count + 1}, Length);
+    {ok, LengthBin} ->
+      handle_large_message(State, LengthBin);
     {error, Reason} ->
       handle_error(State, undefined, Reason)
       %% Return from loop on error.
@@ -155,6 +160,20 @@ reply_options ({reply, Reply})          -> {Reply, undefined};
 reply_options (ok)                      -> {undefined, undefined};
 reply_options ({reply, Reply, Options}) -> {Reply, Options};
 reply_options ({ok, Options})           -> {undefined, Options}.
+
+
+handle_large_message (State=#ts_state{socket=Socket, transport=Transport}, Buffer0) ->
+  case inet:peername(Socket) of
+    {ok, RemoteHostPort} -> ok;
+    {error, _}           -> RemoteHostPort = undefined
+  end,
+  %% Erlang doesn't provide a way to request just "at most N" bytes, so we
+  %% just receive whatever is currently available.
+  Data = case Transport:recv(Socket, 0, 0) of
+           {ok, Buffer1} -> <<Buffer0/binary, Buffer1/binary>>;
+           {error, _}    -> Buffer0
+         end,
+  handle_error(State, undefined, {large_message, {remote, RemoteHostPort}, {data, Data}}).
 
 
 handle_error (State=#ts_state{socket=Socket, transport=Transport, config=#ts_config{handler_module=HandlerModule, stats_module=StatsModule}}, Function, Reason) ->

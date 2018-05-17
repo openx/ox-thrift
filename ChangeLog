@@ -1,3 +1,8 @@
+* Thu May 17 2018 David Hull <david.hull@openx.com> 0.11.0
+- Add a max_message_size option to ox_thrift_server.  Requests larger than
+  this are treated as an error.  (They are probably actually non-thrift
+  payloads sent to the thrift socket.)
+
 * Thu May 24 2018 David Hull <david.hull@openx.com> 0.10.5
 - Transform a throw of an unexpected type from the Thrift server's
   handle_function to an "unknown" application exception.

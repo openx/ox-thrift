@@ -4,6 +4,7 @@
 -type ox_thrift_option() ::
         { recv_timeout, RecvTimeout :: non_neg_integer() | 'infinity' } |
         { map_module, 'dict' | 'maps' } |
+        { max_message_size, MaxMessageSize :: pos_integer() | 'infinity' } |
         { stats_module, StatsModule :: atom() }.
 
 -record(ox_thrift_config, {

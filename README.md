@@ -188,6 +188,19 @@ request.  You can override this with the `recv_timeout` option.
 #ox_thrift_config{options = [ { recv_timeout, TimeoutMilliseconds } ]}
 ```
 
+#### Limiting the Maximum Message Size
+
+By default the OX Thrift server will accept Thrift messages of unlimited size
+(`infinity`).  If you are in an environment where clients may sent you
+improperly-framed thrift messages (for example, random requests coming from a
+port scanner), ox_thrift allows you to limit the maximum size of the message
+the server will accept.  Messages that are larger than this limit will result
+in a call to the `handle_error` function with a `large_message` error.
+
+``` erlang
+#ox_thrift_config{options = [ { max_message_size, MaxSizeBytes } ]}
+```
+
 #### Stats Collection
 
 The OX Thrift server will optionally call a `handle_stats` function in
