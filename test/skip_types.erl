@@ -123,8 +123,9 @@ enum_info('ThrowType') ->
 
 enum_info('MapRet') ->
   [
-    {'ReturnMap', 0},
-    {'ReturnProplist', 1}
+    {'ReturnDict', 0},
+    {'ReturnProplist', 1},
+    {'ReturnMap', 2}
   ];
 
 enum_info(_) -> erlang:error(function_clause).

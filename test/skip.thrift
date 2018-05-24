@@ -55,8 +55,9 @@ enum ThrowType {
 }
 
 enum MapRet {
-  ReturnMap = 0
+  ReturnDict = 0
   ReturnProplist = 1
+  ReturnMap = 2
 }
 
 service SkipService {
