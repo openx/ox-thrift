@@ -57,6 +57,7 @@ enum ThrowType {
   DeclaredException = 1
   UndeclaredException = 2
   Error = 3
+  BadThrow = 4
 }
 
 enum MapRet {

@@ -1,4 +1,4 @@
-%% Copyright 2016-2017, OpenX.  All rights reserved.
+%% Copyright 2016-2018, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_tests).
@@ -256,14 +256,21 @@ throw_exception_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
   %% Undeclared exception should cause connection to be closed.
   ?assertEqual(error, Error3),
   ?assertEqual(false, is_open(Client3)),
-  ?assertMatch(#application_exception{type=0}, Reply3),
+  ?assertMatch(#application_exception{type=?tApplicationException_UNKNOWN}, Reply3),
 
   {Error4, Client4, Reply4} =
     ox_thrift_client:call(Client3, throw_exception, [ ?TEST_THROWTYPE_ERROR ]),
   %% Error should cause connection to be closed.
   ?assertEqual(error, Error4),
   ?assertEqual(false, is_open(Client4)),
-  ?assertMatch(#application_exception{type=0}, Reply4),
+  ?assertMatch(#application_exception{type=?tApplicationException_UNKNOWN}, Reply4),
+
+  {Error5, Client5, Reply5} =
+    ox_thrift_client:call(Client3, throw_exception, [ ?TEST_THROWTYPE_BADTHROW ]),
+  %% Error should cause connection to be closed.
+  ?assertEqual(error, Error5),
+  ?assertEqual(false, is_open(Client5)),
+  ?assertMatch(#application_exception{type=?tApplicationException_UNKNOWN}, Reply5),
 
   DestroyClientFun(Client4).
 
@@ -438,5 +445,6 @@ throw_exception (ThrowType) ->
     ?TEST_THROWTYPE_NORMALRETURN        -> 101;
     ?TEST_THROWTYPE_DECLAREDEXCEPTION   -> throw(simple_exception());
     ?TEST_THROWTYPE_UNDECLAREDEXCEPTION -> throw({unhandled_exception, 1, 2, 3});
-    ?TEST_THROWTYPE_ERROR               -> error(unhandled_error)
+    ?TEST_THROWTYPE_ERROR               -> error(unhandled_error);
+    ?TEST_THROWTYPE_BADTHROW            -> throw(not_a_tuple)
   end.

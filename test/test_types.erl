@@ -128,7 +128,8 @@ enum_info('ThrowType') ->
     {'NormalReturn', 0},
     {'DeclaredException', 1},
     {'UndeclaredException', 2},
-    {'Error', 3}
+    {'Error', 3},
+    {'BadThrow', 4}
   ];
 
 enum_info('MapRet') ->
