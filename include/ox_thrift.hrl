@@ -3,7 +3,7 @@
 
 -type ox_thrift_option() ::
         { recv_timeout, RecvTimeout :: non_neg_integer() | 'infinity' } |
-        { map_module, 'dict' | 'map' } |
+        { map_module, 'dict' | 'maps' } |
         { stats_module, StatsModule :: atom() }.
 
 -record(ox_thrift_config, {
