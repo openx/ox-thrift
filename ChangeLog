@@ -1,3 +1,7 @@
+* Thu May 24 2018 David Hull <david.hull@openx.com> 0.10.5
+- Transform a throw of an unexpected type from the Thrift server's
+  handle_function to an "unknown" application exception.
+
 * Thu May 24 2018 David Hull <david.hull@openx.com> 0.10.4
 - Fix declaration of {map_module, maps} in ox_thrift_option type.
 

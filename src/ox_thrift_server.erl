@@ -1,4 +1,4 @@
-%% Copyright 2016-2017 OpenX.  All rights reserved.
+%% Copyright 2016-2018 OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_server).
@@ -139,10 +139,10 @@ handle_request (Config=#ts_config{protocol_module=ProtocolModule, handler_module
           end,
       {R, ReplyOptions0}
     catch
-      throw:Reason ->
+      throw:Reason when is_tuple(Reason) ->
         {encode(Config, Protocol, Function, reply_exception, SeqId, Reason), undefined};
-      error:Reason ->
-        Message = ox_thrift_util:format_error_message(Reason),
+      ErrorOrThrow:Reason when ErrorOrThrow =:= error; ErrorOrThrow =:= throw ->
+        Message = ox_thrift_util:format_error_message(ErrorOrThrow, Reason),
         ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
         {encode(Config, Protocol, Function, exception, SeqId, ExceptionReply), undefined}
     end,
