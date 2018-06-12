@@ -280,6 +280,12 @@ See the [message protocol documentation](MessageProtocol.md).
   speedups of 18x for decoding and 5x for encoding over the Apache
   Thrift library.
 
+* [elixir-thrift](https://github.com/pinterest/elixir-thrift) is another
+  Elixir Thrift library.  The author claims a speedup of between 10x and 25x
+  over the Apache Thrift library.  It appears that this library generates code
+  from the Thrift definition directly instead of using the structure
+  definitions that the Apache Thrift code generator produces as Thrash does.
+
 * Erlang documentation on
   [Constructing and Matching Binaries](http://erlang.org/doc/efficiency_guide/binaryhandling.html),
   which may be useful for optimization.
@@ -291,6 +297,10 @@ See the [message protocol documentation](MessageProtocol.md).
 * Erik van Oosten's
   [Thrift Specification -- Remote Procedure Call](https://erikvanoosten.github.io/thrift-missing-specification/)
   (a.k.a, "Thrift: The Missing Specification").
+
+* Andrew Prunicki's "Apache Thrift" overview has a [comparison of Thrift with
+  other protocols](http://jnb.ociweb.com/jnb/jnbJun2009.html#compare) that
+  compares encoding size and has some benchmarks.
 
 ## Acknowledgements
 
