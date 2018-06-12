@@ -130,7 +130,8 @@ skip_test () ->
   , skip_test(ox_thrift_protocol_compact)
   ].
 
--define(F(TestName), fun () -> TestName(TestType, MapModule, NewClient, DestroyClient) end).
+-define(F(TestName), {atom_to_list(TestType) ++ ":" ++ atom_to_list(TestName) ++ ":" ++ atom_to_list(MapModule),
+                      fun () -> TestName(TestType, MapModule, NewClient, DestroyClient) end}).
 
 make_tests (TestType, MapModule, NewClient, DestroyClient) ->
   [ ?F(add_one_test)
