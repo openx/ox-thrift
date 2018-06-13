@@ -26,7 +26,7 @@ FW_PACKAGE_PROVIDES=""
 FW_PACKAGE_REPLACES="ox-thrift" # (deb)
 FW_PACKAGE_SUGGESTS=""
 
-FW_PACKAGE_BUILD_DEPENDS="${BUILD_PREFIX}ranch (>= 1.3.2)"
+FW_PACKAGE_BUILD_DEPENDS="${BUILD_PREFIX}ranch (>= 1.5.0)"
 FW_PACKAGE_BUILD_CONFLICTS=""
 
 # dupload is used for submitting debian packages to a package archive
