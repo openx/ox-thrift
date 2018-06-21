@@ -74,7 +74,7 @@ loop (State=#ts_state{socket=Socket, transport=Transport,
   %% Read the length, and then the request data.
   %% Result0 will be `{ok, Packet}' or `{error, Reason}'.
   case Transport:recv(Socket, 4, RecvTimeout) of
-    {ok, <<Length:32/integer-signed-big>>} when MaxMessageSize =:= infinity; Length =< MaxMessageSize ->
+    {ok, <<Length:32/integer-unsigned-big>>} when MaxMessageSize =:= infinity; Length =< MaxMessageSize ->
       loop1(State#ts_state{call_count = State#ts_state.call_count + 1}, Length);
     {ok, LengthBin} ->
       handle_large_message(State, LengthBin);
@@ -103,7 +103,7 @@ loop2 (State=#ts_state{socket=Socket, transport=Transport, config=Config}, Reque
     _ ->
       %% Normal function.
       ReplyLen = iolist_size(ReplyData),
-      Reply = [ <<ReplyLen:32/big-signed>>, ReplyData ],
+      Reply = [ <<ReplyLen:32/integer-unsigned-big>>, ReplyData ],
       SendResult = Transport:send(Socket, Reply),
       ?LOG("server send(~p, ~p) -> ~p\n", [ Socket, Reply, SendResult ]),
       case SendResult of

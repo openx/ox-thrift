@@ -1,3 +1,6 @@
+* Thu Jun 21 2018 David Hull <david.hull@openx.com> 0.11.1
+- Decode and encode framed transport message length as unsigned.
+
 * Thu May 17 2018 David Hull <david.hull@openx.com> 0.11.0
 - Add a max_message_size option to ox_thrift_server.  Requests larger than
   this are treated as an error.  (They are probably actually non-thrift

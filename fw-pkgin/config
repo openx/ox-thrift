@@ -6,7 +6,7 @@ ERLANG_VERSION=$(erl -eval 'io:format("~s", [ erlang:system_info(otp_release) ])
 BUILD_PREFIX=erlang-$(perl -e '$ARGV[0] =~ m/^(R?\d+[A-Z]*)/i and print lc($1) or die "$ARGV[0]";' "$ERLANG_VERSION")-
 
 FW_PACKAGE_NAME="${BUILD_PREFIX}ox-thrift"
-FW_PACKAGE_VERSION="0.11.0"
+FW_PACKAGE_VERSION="0.11.1"
 FW_PACKAGE_MAINTAINER="david.hull <david.hull@openx.com>"
 FW_PACKAGE_ORGANIZATION=${FW_PACKAGE_ORGANIZATION-"unknown"}
 FW_PACKAGE_PACKAGER=${FW_PACKAGE_PACKAGER-"david.hull <david.hull@openx.com>"}
