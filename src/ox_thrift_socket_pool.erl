@@ -133,7 +133,7 @@ stats (Id) ->
 
 -record(connection, {
           socket = error({required, socket}) :: inet:socket(),
-          lifetime_epoch_ms = error({required, lifetime_epoch_ms}) :: non_neg_integer(),
+          lifetime_epoch_ms = error({required, lifetime_epoch_ms}) :: non_neg_integer() | 'infinity',
           monitor_ref :: reference() | 'undefined',
           use_count = 0 :: non_neg_integer()}).
 
@@ -190,7 +190,7 @@ checkout (Id) ->
 %% The Status is either `ok' to indicate that it is OK to return the socket to
 %% the pool to be reused by a subsequence `checkout' call, or `close' if the
 %% socket should be closed.
-checkin (Id, Socket, Status) ->
+checkin (Id, Socket, Status) when is_port(Socket) ->
   gen_server:cast(Id, {checkin, Socket, Status}),
   Id.
 
@@ -262,7 +262,7 @@ handle_info ({'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{connection
   %% A process that had checked out a socket died.  Update the connection
   %% accounting so that we do not leak connections.
 
-  %% The monitor_ref is not the key, so use ets:match to find the matching
+  %% The monitor_ref is not the key, so search the map to find the matching
   %% connection record and then close it.
   Socket = ?MAPS_FOLD(
               fun (S, #connection{monitor_ref=M}, _Acc) when M =:= MonitorRef -> S;
@@ -336,8 +336,8 @@ open (CallerPid, State) ->
   end.
 
 
--spec close(Socket::inet:socket(), CloseSocket::atom(), State::#state{}) -> #state{}.
-close (Socket, CloseSocket, State=#state{remaining_connections=Remaining, busy=Busy, connections=Connections}) ->
+-spec close(Socket::inet:socket(), CloseSocket::('close' | 'do_not_close'), State::#state{}) -> #state{}.
+close (Socket, CloseSocket, State=#state{remaining_connections=Remaining, busy=Busy, connections=Connections}) when is_port(Socket) ->
   CloseSocket =:= close andalso gen_tcp:close(Socket),
   ConnectionsOut = ?MAPS_REMOVE(Socket, Connections),
   State#state{remaining_connections = Remaining + 1, busy = Busy - 1, connections = ConnectionsOut}.
@@ -432,6 +432,9 @@ echo_test () ->
   %% This is an 'error' checkin, so the socket is closed.
   checkin(?TEST_ID, Socket1, close),
   ?assertEqual(undefined, get_connection(?TEST_ID, Socket1)),
+
+  %% Check that checkin validates its arguments.
+  ?assertError(function_clause, checkin(?TEST_ID, undefined, ok)),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
