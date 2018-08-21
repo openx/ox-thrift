@@ -13,6 +13,8 @@
 
 -module(ox_thrift_socket_pool).
 
+-include_lib("stdlib/include/assert.hrl").
+
 -behaviour(gen_server).
 -behaviour(ox_thrift_connection).
 
@@ -267,7 +269,8 @@ handle_info ({'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{connection
   Socket = ?MAPS_FOLD(
               fun (S, #connection{monitor_ref=M}, _Acc) when M =:= MonitorRef -> S;
                   (_S, _C, Acc)                                               -> Acc
-              end, undefined, Connections),
+              end, not_found, Connections),
+  is_port(Socket) orelse ?assert({Socket, Connections}), %% Crash if socket is not found; this should never happen.
   %% Close and forget the socket.
   StateOut = close(Socket, close, State),
   {noreply, StateOut};
