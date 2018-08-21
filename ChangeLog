@@ -1,3 +1,7 @@
+* Tue Aug 21 2018 David Hull <david.hull@openx.com> 0.11.2.1
+- Improve specs and add some guards to ox_thrift_socket_pool.
+- Add check for debugging a crash in ox_thrift_socket_pool.
+
 * Thu Jun 21 2018 David Hull <david.hull@openx.com> 0.11.1
 - Decode and encode framed transport message length as unsigned.
 

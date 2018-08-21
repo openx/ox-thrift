@@ -1,4 +1,4 @@
-<!-- -*- mode:gfm; word-wrap:nil -*- github-flavored markdown -->
+<!-- -*- mode:gfm; word-wrap:nil; indent-tabs-mode:nil -*- github-flavored markdown -->
 
 # OpenX Erlang Thrift Implementation
 
@@ -108,6 +108,22 @@ Thrift client.
   shared among multiple processes.  The pool is managed by a
   gen_server which you are expected to link into your supervisor tree
   by calling the `ox_thrift_socket_pool:start_link/4` function.
+
+You can turn on some additional features out in `ox_thrift_socket_pool` by
+adding the following to your `rebar.config` file:
+
+``` erlang
+{overrides,
+  [ {add, ox_thrift,
+      [ {erl_opts,
+          [ {d, 'DEBUG_CONNECTIONS'} %% Debug errors in connection monitoring
+          ]}
+      ]}
+  ]}.
+```
+
+* The `DEBUG_CONNECTIONS` macro controls whether the connections monitoring is
+  logged if certain errors are detected.
 
 ### Server
 

@@ -25,6 +25,30 @@
 -define(M, 1000000).
 -define(K, 1000).
 
+%% Macros for logging messages in a standard format.
+-define(THRIFT_LOG_MSG(LogFunc, Format),
+        LogFunc("~s:~B - " ++ Format, [ ?MODULE, ?LINE ])).
+-define(THRIFT_LOG_MSG(LogFunc, Format, Args),
+        LogFunc("~s:~B - " ++ Format, [ ?MODULE, ?LINE | Args ])).
+-ifdef(DEBUG_CONNECTIONS).
+-define(THRIFT_ERROR_MSG(Format),
+        ?THRIFT_LOG_MSG(error_logger:error_msg, Format)).
+-define(THRIFT_ERROR_MSG(Format, Args),
+        ?THRIFT_LOG_MSG(error_logger:error_msg, Format, Args)).
+
+-define(MONITOR_QUEUE_SIZE, 200).
+monitor_queue_new () -> queue:from_list(lists:duplicate(?MONITOR_QUEUE_SIZE, undefined)).
+-define(MONITOR_QUEUE_ADD(Item, Queue), queue:in(Item, queue:drop(Queue))).
+monitor_queue_to_list (undefined) -> [];
+monitor_queue_to_list (Queue)     -> queue:to_list(Queue).
+-else. %% ! DEBUG_CONNECTIONS
+-define(THRIFT_ERROR_MSG(Format), ok).
+-define(THRIFT_ERROR_MSG(Format, Args), ok).
+monitor_queue_new () -> undefined.
+-define(MONITOR_QUEUE_ADD(Item, Queue), Queue).
+-endif. %% ! DEBUG_CONNECTIONS
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Macros which provide an identical interface to maps and dicts.
@@ -76,6 +100,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           busy = 0 :: non_neg_integer(),
           unavailable = 0 :: non_neg_integer(),
           idle_queue = undefined :: ?QUEUE_TYPE | 'undefined',
+          monitor_queue = undefined :: ?QUEUE_TYPE | 'undefined', %% DEBUG_CONNECTIONS
           connections = undefined :: map_type() | 'undefined'}).
 
 
@@ -135,6 +160,7 @@ stats (Id) ->
           socket = error({required, socket}) :: inet:socket(),
           lifetime_epoch_ms = error({required, lifetime_epoch_ms}) :: non_neg_integer() | 'infinity',
           monitor_ref :: reference() | 'undefined',
+          owner :: pid() | 'undefined',
           use_count = 0 :: non_neg_integer()}).
 
 
@@ -191,7 +217,7 @@ checkout (Id) ->
 %% the pool to be reused by a subsequence `checkout' call, or `close' if the
 %% socket should be closed.
 checkin (Id, Socket, Status) when is_port(Socket) ->
-  gen_server:cast(Id, {checkin, Socket, Status}),
+  gen_server:cast(Id, {checkin, Socket, Status, self()}),
   Id.
 
 
@@ -213,7 +239,7 @@ get_connection (Id, Socket) ->
 
 %% @hidden
 init (State=#state{}) ->
-  {ok, State#state{idle_queue = queue:new(), connections = ?MAPS_NEW()}}.
+  {ok, State#state{idle_queue = queue:new(), monitor_queue = monitor_queue_new(), connections = ?MAPS_NEW()}}.
 
 %% @hidden
 handle_call (checkout, {CallerPid, _Tag}, State=#state{idle_queue=IdleQueue}) ->
@@ -224,7 +250,7 @@ handle_call (checkout, {CallerPid, _Tag}, State=#state{idle_queue=IdleQueue}) ->
     end,
   {reply, Reply, StateOut};
 handle_call (get_state, _From, State) ->
-  {reply, State#state{idle_queue = undefined, connections = undefined}, State};
+  {reply, State#state{idle_queue = undefined, monitor_queue = undefined, connections = undefined}, State};
 handle_call ({get_connection, Socket}, _From, State=#state{connections=Connections}) ->
   Connection = ?MAPS_GET(Socket, Connections, undefined),
   {reply, Connection, State};
@@ -237,13 +263,14 @@ handle_call (stats, _From, State=#state{idle=Idle, busy=Busy, unavailable=Unavai
              {busy, Busy}],
             State};
 %% Transfers control of a checked-out socket to a new owner.
-handle_call ({transfer, Socket, NewOwner}, _From, State=#state{connections=Connections}) ->
+handle_call ({transfer, Socket, NewOwner}, _From, State=#state{monitor_queue=MonitorQueue, connections=Connections}) ->
   %% Stop monitoring the process that checked the socket out, so we won't
   %% close the socket if that process dies.
   #connection{monitor_ref=MonitorRef} = ?MAPS_GET(Socket, Connections),
   demonitor(MonitorRef, [ flush ]),
+  MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_transfer', MonitorRef, _From, Socket, erlang:monotonic_time()}, MonitorQueue),
   %% Stop considering the socket in the pool's accounting.
-  StateOut = close(Socket, do_not_close, State),
+  StateOut = close(Socket, do_not_close, State#state{monitor_queue = MonitorQueueOut}),
   %% Make NewOwner be the socket's controlling process.
   Reply = gen_tcp:controlling_process(Socket, NewOwner),
   {reply, Reply, StateOut};
@@ -251,14 +278,14 @@ handle_call (Request, _From, State) ->
   {reply, {unknown_call, Request}, State}.
 
 %% @hidden
-handle_cast ({checkin, Socket, Status}, State) ->
-  StateOut = maybe_put_idle(Socket, Status, State),
+handle_cast ({checkin, Socket, Status, Pid}, State) ->
+  StateOut = maybe_put_idle(Socket, Status, Pid, State),
   {noreply, StateOut};
 handle_cast (_, State) ->
   {noreply, State}.
 
 %% @hidden
-handle_info ({'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{connections=Connections}) ->
+handle_info (_DownMsg={'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{monitor_queue=MonitorQueue, connections=Connections}) ->
   %% A process that had checked out a socket died.  Update the connection
   %% accounting so that we do not leak connections.
 
@@ -267,9 +294,20 @@ handle_info ({'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{connection
   Socket = ?MAPS_FOLD(
               fun (S, #connection{monitor_ref=M}, _Acc) when M =:= MonitorRef -> S;
                   (_S, _C, Acc)                                               -> Acc
-              end, undefined, Connections),
-  %% Close and forget the socket.
-  StateOut = close(Socket, close, State),
+              end, not_found, Connections),
+  StateOut =
+    case Socket of
+      not_found ->
+        %% This should never happen.
+        MonitorQueueOut = ?MONITOR_QUEUE_ADD({'down_missing', MonitorRef, _Pid, Socket, erlang:monotonic_time()}, MonitorQueue),
+        ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n  ~p\n",
+                          [ _DownMsg, State#state{monitor_queue = undefined}, monitor_queue_to_list(MonitorQueueOut) ]),
+        State#state{monitor_queue = MonitorQueueOut};
+      _ ->
+        %% Close and forget the socket.
+        MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_down', MonitorRef, _Pid, Socket, erlang:monotonic_time()}, MonitorQueue),
+        close(Socket, close, State#state{monitor_queue = MonitorQueueOut})
+    end,
   {noreply, StateOut};
 handle_info (_, State) ->
   {noreply, State}.
@@ -285,25 +323,37 @@ code_change (_OldVsn, State, _Extra) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-get_idle (CallerPid, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue, connections=Connections}) ->
+get_idle (CallerPid, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue, monitor_queue=MonitorQueue, connections=Connections}) ->
   {{value, Socket}, IdleQueueOut} = queue:out(IdleQueue),
   MonitorRef = monitor(process, CallerPid),
+  MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_get', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
   Connection=#connection{use_count=UseCount} = ?MAPS_GET(Socket, Connections),
-  ConnectionOut = Connection#connection{use_count = UseCount + 1, monitor_ref = MonitorRef},
+  ConnectionOut = Connection#connection{monitor_ref = MonitorRef, owner = CallerPid, use_count = UseCount + 1},
   ConnectionsOut = ?MAPS_UPDATE(Socket, ConnectionOut, Connections),
-  {{ok, Socket}, State#state{idle = Idle - 1, busy = Busy + 1, idle_queue = IdleQueueOut, connections = ConnectionsOut}}.
+  {{ok, Socket}, State#state{idle = Idle - 1, busy = Busy + 1, idle_queue = IdleQueueOut, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}}.
 
 
-maybe_put_idle (Socket, Status, State=#state{connections=Connections}) ->
-  #connection{lifetime_epoch_ms=LifetimeEpochMS, monitor_ref=MonitorRef} = ?MAPS_GET(Socket, Connections),
-  demonitor(MonitorRef, [ flush ]),
+maybe_put_idle (Socket, Status, CallerPid, State=#state{monitor_queue=MonitorQueue, connections=Connections}) ->
+  case ?MAPS_GET(Socket, Connections, undefined) of
+    Connection=#connection{lifetime_epoch_ms=LifetimeEpochMS, monitor_ref=MonitorRef, owner=CallerPid} ->
+      demonitor(MonitorRef, [ flush ]),
+      MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_put', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
+      ConnectionsOut = ?MAPS_UPDATE(Socket, Connection#connection{monitor_ref = undefined, owner = undefined}, Connections),
+      StateOut = State#state{monitor_queue = MonitorQueueOut, connections = ConnectionsOut},
 
-  DoClose =
-    Status =/= ok orelse
-    (is_integer(LifetimeEpochMS) andalso now_ms(os:timestamp()) >= LifetimeEpochMS),
+      DoClose =
+        Status =/= ok orelse
+        (is_integer(LifetimeEpochMS) andalso now_ms(os:timestamp()) >= LifetimeEpochMS),
 
-  if DoClose -> close(Socket, close, State);
-     true    -> put_idle(Socket, State)
+      if DoClose -> close(Socket, close, StateOut);
+         true    -> put_idle(Socket, StateOut)
+      end;
+    undefined ->
+      %% This should never happen.
+      MonitorQueueOut = ?MONITOR_QUEUE_ADD({'put_missing', undefined, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
+      ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n",
+                        [ State#state{monitor_queue = undefined}, monitor_queue_to_list(MonitorQueueOut) ]),
+      State#state{monitor_queue = MonitorQueueOut}
   end.
 
 
@@ -318,7 +368,7 @@ open (CallerPid, State) ->
     #state{remaining_connections=0} -> {{error, busy}, State#state{unavailable=State#state.unavailable + 1}};
     #state{remaining_connections=Remaining, busy=Busy,
            host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS,
-           connections = Connections}
+           monitor_queue=MonitorQueue, connections=Connections}
       when Remaining > 0 ->
       case gen_tcp:connect(Host, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ], ConnectTimeoutMS) of
         Success={ok, Socket} ->
@@ -327,9 +377,10 @@ open (CallerPid, State) ->
                               _        -> now_ms(os:timestamp()) + MaxAgeMS
                             end,
           MonitorRef = monitor(process, CallerPid),
-          ConnectionOut = #connection{socket = Socket, lifetime_epoch_ms = LifetimeEpochMS, use_count = 1, monitor_ref = MonitorRef},
+          MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_new', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
+          ConnectionOut = #connection{socket = Socket, lifetime_epoch_ms = LifetimeEpochMS, monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
           ConnectionsOut = ?MAPS_PUT(Socket, ConnectionOut, Connections),
-          {Success, State#state{remaining_connections = Remaining - 1, busy = Busy + 1, connections = ConnectionsOut}};
+          {Success, State#state{remaining_connections = Remaining - 1, busy = Busy + 1, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}};
         Error ->
           {Error, State#state{unavailable=State#state.unavailable + 1}}
       end
@@ -481,8 +532,6 @@ timeout_test () ->
 
 
 monitor_test () ->
-  ?TEST_ID = ox_thrift_test,
-  ?TEST_PORT = 9999,
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
 
@@ -494,6 +543,33 @@ monitor_test () ->
   ?assertMatch(#state{idle = 0, busy = 1}, get_state(?TEST_ID)),
   timer:sleep(100),
   ?assertMatch(#state{idle = 0, busy = 0}, get_state(?TEST_ID)),
+
+  ok = destroy(?TEST_ID),
+  exit(EchoPid, kill).
+
+monitor_bad_down_test () ->
+  EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
+  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
+
+  %% Send the pool a spurious DOWN message and see what happens.
+  ?TEST_ID ! {'DOWN', make_ref(), process, self(), shutdown},
+  timer:sleep(10),
+  io:format(user, "stats ~p\n", [ stats(?TEST_ID) ]),
+
+  ok = destroy(?TEST_ID),
+  exit(EchoPid, kill).
+
+
+monitor_bad_checkin_test () ->
+  EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
+  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
+
+  %% Check in a socket that was not checked in and see what happens.
+  Port = open_port({spawn, <<"cat">>}, []),
+  checkin(?TEST_ID, Port, ok),
+  timer:sleep(10),
+  io:format(user, "stats ~p\n", [ stats(?TEST_ID) ]),
+  port_close(Port),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
