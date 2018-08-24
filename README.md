@@ -117,6 +117,7 @@ adding the following to your `rebar.config` file:
   [ {add, ox_thrift,
       [ {erl_opts,
           [ {d, 'DEBUG_CONNECTIONS'} %% Debug errors in connection monitoring
+          , {d, 'MONDEMAND_PROGID', myapp} %% Emit mondemand stats for errors.
           ]}
       ]}
   ]}.
@@ -124,6 +125,10 @@ adding the following to your `rebar.config` file:
 
 * The `DEBUG_CONNECTIONS` macro controls whether the connections monitoring is
   logged if certain errors are detected.
+
+* The `MONDEMAND_PROGID` macro controls whether error metrics are emitted
+  using the [MonDemand](https://github.com/mondemand/mondemand-erlang) metric
+  collection framework.
 
 ### Server
 

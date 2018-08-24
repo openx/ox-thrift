@@ -49,6 +49,14 @@ monitor_queue_new () -> undefined.
 -endif. %% ! DEBUG_CONNECTIONS
 
 
+-ifdef(MONDEMAND_PROGID).
+-define(MONDEMAND_INCREMENT(Stat), mondemand:increment(?MONDEMAND_PROGID, Stat, 1)).
+-define(MONDEMAND_ENABLED, true).
+-else. %% ! MONDEMAND_PROGID
+-define(MONDEMAND_INCREMENT(Stat), ok).
+-define(MONDEMAND_ENABLED, false).
+-endif. %% ! MONDEMAND_PROGID
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% Macros which provide an identical interface to maps and dicts.
@@ -302,6 +310,7 @@ handle_info (_DownMsg={'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{m
         MonitorQueueOut = ?MONITOR_QUEUE_ADD({'down_missing', MonitorRef, _Pid, Socket, erlang:monotonic_time()}, MonitorQueue),
         ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n  ~p\n",
                           [ _DownMsg, State#state{monitor_queue = undefined}, monitor_queue_to_list(MonitorQueueOut) ]),
+        ?MONDEMAND_INCREMENT(socket_not_found),
         State#state{monitor_queue = MonitorQueueOut};
       _ ->
         %% Close and forget the socket.
@@ -353,6 +362,7 @@ maybe_put_idle (Socket, Status, CallerPid, State=#state{monitor_queue=MonitorQue
       MonitorQueueOut = ?MONITOR_QUEUE_ADD({'put_missing', undefined, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
       ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n",
                         [ State#state{monitor_queue = undefined}, monitor_queue_to_list(MonitorQueueOut) ]),
+      ?MONDEMAND_INCREMENT(socket_not_found),
       State#state{monitor_queue = MonitorQueueOut}
   end.
 
@@ -547,7 +557,24 @@ monitor_test () ->
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
 
+
+-ifdef(MONDEMAND_PROGID).
+mock_mondemand () ->
+  %% Mock out mondemand:increment, using an ets table to track the values.
+  TId = ets:new(md_debug, [ public ]),
+  meck:new(mondemand),
+  meck:expect(mondemand, increment, fun (?MONDEMAND_PROGID, Key, Inc) -> ets:update_counter(TId, Key, Inc, {Key, 0}) end),
+  TId.
+unmock_mondemand ()  -> meck:unload(mondemand).
+-else. %% ! MONDEMAND_PROGID
+mock_mondemand () -> undefined.
+unmock_mondemand () -> ok.
+-endif. %% ! MONDEMAND_PROGID
+
+
 monitor_bad_down_test () ->
+  TId = mock_mondemand(),
+
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
 
@@ -557,10 +584,16 @@ monitor_bad_down_test () ->
   io:format(user, "stats ~p\n", [ stats(?TEST_ID) ]),
 
   ok = destroy(?TEST_ID),
-  exit(EchoPid, kill).
+  exit(EchoPid, kill),
+
+  ?MONDEMAND_ENABLED andalso
+    ?assertMatch([ {_, 1} ], ets:lookup(TId, socket_not_found)),
+  unmock_mondemand().
 
 
 monitor_bad_checkin_test () ->
+  TId = mock_mondemand(),
+
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
 
@@ -572,7 +605,11 @@ monitor_bad_checkin_test () ->
   port_close(Port),
 
   ok = destroy(?TEST_ID),
-  exit(EchoPid, kill).
+  exit(EchoPid, kill),
+
+  ?MONDEMAND_ENABLED andalso
+    ?assertMatch([ {_, 1} ], ets:lookup(TId, socket_not_found)),
+  unmock_mondemand().
 
 
 limit_test () ->
