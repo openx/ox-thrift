@@ -1,6 +1,0 @@
-# put whatever (auto)make commands here, they will be included from Makefile.am
-FW_DIALYZERFLAGS=$(shell ./dialyzer-flags) -Wno_match -Wno_undefined_callbacks
-EXTRA_DIST += dialyzer-flags
-
-maintainer-clean-local::
-	@test ! -d doc || rm -rf doc
