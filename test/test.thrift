@@ -36,7 +36,7 @@ struct MissingFields {
   9:   optional string fifth
   10:  optional AllTypes sixth_skip             // SKIP
   12:  optional bool seventh
-  14:  optional map<string,i32> eighth_skip     // SKIP
+  14:  optional map<string,Container> eighth_skip // SKIP
   15:  optional byte ninth
   100: optional bool tenth
   200: optional byte eleventh_skip              // SKIP

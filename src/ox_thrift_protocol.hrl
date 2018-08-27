@@ -408,22 +408,22 @@ skip (Buffer0, struct) ->
 skip (Buffer0, list) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   foldn(fun (BufferL0) ->
-            {BufferL1, _} = decode(BufferL0, EType, #codec_config{}),
+            BufferL1 = skip(BufferL0, EType),
             BufferL1
         end, Buffer1, Size);
 
 skip (Buffer0, map) ->
   {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
   foldn(fun (BufferL0) ->
-            {BufferL1, _} = decode(BufferL0, KType, #codec_config{}),
-            {BufferL2, _} = decode(BufferL1, VType, #codec_config{}),
+            BufferL1 = skip(BufferL0, KType),
+            BufferL2 = skip(BufferL1, VType),
             BufferL2
         end, Buffer1, Size);
 
 skip (Buffer0, set) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   foldn(fun (BufferL0) ->
-            {BufferL1, _} = decode(BufferL0, EType, #codec_config{}),
+            BufferL1 = skip(BufferL0, EType),
             BufferL1
         end, Buffer1, Size);
 

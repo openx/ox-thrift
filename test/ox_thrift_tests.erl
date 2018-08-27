@@ -336,7 +336,14 @@ skip_test (Protocol) ->
   Client0 = new_client_skip(Protocol),
 
   List = [ 2, 3, 5, 8, 13 ],
-  Map = dict:from_list([{ <<"one">>, 1}, {<<"two">>, 2} ]),
+  StringIntMap = dict:from_list([{ <<"one">>, 1}, {<<"two">>, 2} ]),
+
+  ContainerOne = #'Container'{
+                    first_field = 1,
+                    second_struct = #'Integers'{int_field = 2, int_list = [ 3, 4, 5 ], int_set = [ 6, 7, 8 ]},
+                    third_field = 9},
+  ContainerTwo = #'Container'{first_field = 10, second_struct = #'Integers'{int_list = [ 11 ]}, third_field = 12},
+  ContainerMap = dict:from_list([{ <<"one">>, ContainerOne}, {<<"two">>, ContainerTwo} ]),
   Expected = #'MissingFields'{
              first = 111,
              third = 3.1416,
@@ -344,7 +351,7 @@ skip_test (Protocol) ->
              seventh = false,
              ninth = 99
             },
-  Input = Expected#'MissingFields'{
+  Input1 = Expected#'MissingFields'{
              second_skip = 222,
              fourth_skip = List,
              sixth_skip = #'AllTypes'{
@@ -353,15 +360,27 @@ skip_test (Protocol) ->
                              double_field = 1.25,
                              string_field = <<"zyzyx">>,
                              int_list = List,
-                             string_int_map = Map},
-             eighth_skip = Map
-           },
+                             string_int_map = StringIntMap},
+             eighth_skip = ContainerMap
+            },
 
-  {ok, Client1, Output} = ox_thrift_client:call(Client0, missing, [ Input ]),
-  %% ?assertEqual(Input, Output),
-  ?assertEqual(Expected, Output),
+  {ok, Client1, Output1} = ox_thrift_client:call(Client0, missing, [ Input1 ]),
+  ?assertEqual(Expected, Output1),
 
-  destroy_client_skip(Client1).
+  %% Test empty maps with compact protocol.
+  Input2 = Expected#'MissingFields'{
+             second_skip = 222,
+             fourth_skip = List,
+             sixth_skip = #'AllTypes'{
+                             bool_field = true,
+                             byte_field = 151,
+                             double_field = 1.25,
+                             string_field = <<"zyzyx">>}
+            },
+  {ok, Client2, Output2} = ox_thrift_client:call(Client0, missing, [ Input2 ]),
+  ?assertEqual(Expected, Output2),
+
+  destroy_client_skip(Client2).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
