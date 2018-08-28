@@ -188,7 +188,7 @@ encode ({map, KeyType, ValType}, Data) ->
                   end, [], Data)
       ];
     true ->
-      %% Encode a dict as a map.
+      %% Encode an Erlang dict as a map.
       [ write_map_begin(KeyTId, ValTId, dict:size(Data))
       , dict:fold(fun (Key, Val, Acc) ->
                       [ encode(KeyType, Key)
@@ -201,9 +201,18 @@ encode ({map, KeyType, ValType}, Data) ->
 encode ({set, Type}, Data) ->
   %% Encode a set.
   EltType = term_to_typeid(Type),
-  [ write_list_or_set_begin(EltType, sets:size(Data))
-  , sets:fold(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
-  ];
+  if
+    is_list(Data) ->
+      %% Encode a list as a set.
+      [ write_list_or_set_begin(EltType, length(Data))
+      , lists:foldl(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
+      ];
+    true ->
+      %% Encode an Erlang set as a set.
+      [ write_list_or_set_begin(EltType, sets:size(Data))
+      , sets:fold(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
+      ]
+  end;
 
 encode (Type, Data) when is_atom(Type) ->
   %% Encode the basic types.

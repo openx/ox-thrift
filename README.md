@@ -31,6 +31,10 @@ the Apache Thrift Erlang library.
   decoding, however, OX Thrift can be configured to return a dict or a
   map.  See the documentation for the `map_module` option.
 
+* For the Thrift `set` type, for encoding OX Thrift will accept either a set
+  (as Apache Thrift does) or a list.  OX Thrift does not deduplicate the list
+  elements if passed a list.
+
 * Like the Apache library, OX Thrift does not enforce required struct
   fields, on either encoding or decoding.
 
