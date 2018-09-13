@@ -23,7 +23,7 @@
                   , read_map_begin/1
                   , read_list_or_set_begin/1
                   , read/2 ]}).
-%% -compile(inline_list_funcs).
+-compile(inline_list_funcs).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

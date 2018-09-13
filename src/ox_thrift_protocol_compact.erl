@@ -34,7 +34,7 @@
                   , encode_zigzag/1
                   , decode_zigzag/1
                   ]}).
-%% -compile(inline_list_funcs).
+-compile(inline_list_funcs).
 
 -define(TYPE_STRUCT_FIELD_STOP, 0).
 -define(TYPE_STRUCT_FIELD_TRUE, 1).
