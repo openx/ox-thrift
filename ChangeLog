@@ -1,5 +1,7 @@
 * Thu Sep 13 2018 David Hull <david.hull@openx.com> 0.13.1
 - Inline list functions in protocol modules.
+- Replace a lists:map with a list comprehension in protocol modules.
+- Avoid an extra list when encoding collections in protocol modules.
 
 * Mon Aug 27 2018 David Hull <david.hull@openx.com> 0.13.0
 - Fix skipping of unknown structs.

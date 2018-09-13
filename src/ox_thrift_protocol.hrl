@@ -173,7 +173,7 @@ encode ({map, KeyType, ValType}, Data) ->
     is_list(Data) ->
       %% Encode a proplist as a map.
       [ write_map_begin(KeyTId, ValTId, length(Data))
-      , lists:foldl(fun ({Key, Val}, Acc) ->
+      | lists:foldl(fun ({Key, Val}, Acc) ->
                         [ encode(KeyType, Key)
                         , encode(ValType, Val)
                         | Acc ]
@@ -181,7 +181,7 @@ encode ({map, KeyType, ValType}, Data) ->
       ];
     ?IS_MAP(Data) ->
       [ write_map_begin(KeyTId, ValTId, ?MAP_SIZE(Data))
-      , maps:fold(fun (Key, Val, Acc) ->
+      | maps:fold(fun (Key, Val, Acc) ->
                       [ encode(KeyType, Key)
                       , encode(ValType, Val)
                       | Acc ]
@@ -190,7 +190,7 @@ encode ({map, KeyType, ValType}, Data) ->
     true ->
       %% Encode an Erlang dict as a map.
       [ write_map_begin(KeyTId, ValTId, dict:size(Data))
-      , dict:fold(fun (Key, Val, Acc) ->
+      | dict:fold(fun (Key, Val, Acc) ->
                       [ encode(KeyType, Key)
                       , encode(ValType, Val)
                       | Acc ]
@@ -205,12 +205,12 @@ encode ({set, Type}, Data) ->
     is_list(Data) ->
       %% Encode a list as a set.
       [ write_list_or_set_begin(EltType, length(Data))
-      , lists:foldl(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
+      | lists:foldl(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
       ];
     true ->
       %% Encode an Erlang set as a set.
       [ write_list_or_set_begin(EltType, sets:size(Data))
-      , sets:fold(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
+      | sets:fold(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
       ]
   end;
 
