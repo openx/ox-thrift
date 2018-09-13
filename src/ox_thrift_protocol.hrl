@@ -162,7 +162,7 @@ encode ({list, Type}, Data)
   %% Encode a list.
   EltTId = term_to_typeid(Type),
   [ write_list_or_set_begin(EltTId, length(Data))
-  , lists:map(fun (Elt) -> encode(Type, Elt) end, Data)
+  | [ encode(Type, Elt) || Elt <- Data ]
   ];
 
 encode ({map, KeyType, ValType}, Data) ->
