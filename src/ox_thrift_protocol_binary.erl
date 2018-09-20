@@ -1,4 +1,4 @@
-%% Copyright 2016-2017, OpenX.  All rights reserved.
+%% Copyright 2016-2018, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_protocol_binary).
@@ -12,7 +12,9 @@
 -define(THRIFT_PROTOCOL, binary).
 -include("ox_thrift_protocol.hrl").
 
--compile({inline, [ write_message_begin/3
+-compile({inline, [ term_to_wire/1
+                  , wire_to_term/1
+                  , write_message_begin/3
                   , write_field_begin/3
                   , write_field_stop/0
                   , write_map_begin/3
@@ -162,14 +164,31 @@ read_message_begin (Data0) ->
   end.
 
 -spec read_field_begin (IData::binary(), LastId::integer())
-                       -> {OData::binary(), Type::proto_type(), Id::integer()}
-                        | {OData::binary(), field_stop, 'undefined'}.
+                       -> {OData::binary(), field_stop}
+                        | {OData::binary(), bool, Id::integer(), Val::boolean()}
+                        | {OData::binary(), byte | i16 | i32 | i64, Id::integer(), Val::integer()}
+                        | {OData::binary(), double, Id::integer(), Val::float()}
+                        | {OData::binary(), struct | map | set | list, Id::integer()}.
 read_field_begin (Data0, _LastId) ->
   case Data0 of
-    <<?TYPE_STOP:8/big-signed, Data1/binary>>  ->
-      {Data1, field_stop, undefined};
-    <<Type:8/big-signed, Id:16/big-signed, Data1/binary>> ->
-      {Data1, wire_to_term(Type), Id}
+    <<?TYPE_STOP:8, Data1/binary>> ->
+      {Data1, field_stop};
+    <<?TYPE_BOOL:8, Id:16, Bool:8, Data1/binary>> ->
+      {Data1, bool, Id, Bool =/= 0};
+    <<?TYPE_BYTE:8, Id:16, Val:8/signed, Data1/binary>> ->
+      {Data1, byte, Id, Val};
+    <<?TYPE_DOUBLE:8, Id:16, Val:64/float-signed-big, Data1/binary>> ->
+      {Data1, double, Id, Val};
+    <<?TYPE_I16:8, Id:16, Val:16/signed, Data1/binary>> ->
+      {Data1, i16, Id, Val};
+    <<?TYPE_I32:8, Id:16, Val:32/signed, Data1/binary>> ->
+      {Data1, i32, Id, Val};
+    <<?TYPE_I64:8, Id:16, Val:64/signed, Data1/binary>> ->
+      {Data1, i64, Id, Val};
+    <<?TYPE_STRING:8, Id:16, Size:32, String:Size/binary, Data1/binary>> ->
+      {Data1, string, Id, String};
+    <<Type:8, Id:16, Data1/binary>> ->
+      {Data1, wire_to_term(Type), Id} %% struct, map, set, or list.
   end.
 
 %% This isn't necessary, since we never explicitly read a `field_stop', we

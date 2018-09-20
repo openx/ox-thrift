@@ -1,3 +1,6 @@
+* Thu Sep 20 2018 David Hull <david.hull@openx.com> 0.14.0
+- Optimize decoding of struct fields.
+
 * Thu Sep 13 2018 David Hull <david.hull@openx.com> 0.13.1
 - Inline list functions in protocol modules.
 - Replace a lists:map with a list comprehension in protocol modules.

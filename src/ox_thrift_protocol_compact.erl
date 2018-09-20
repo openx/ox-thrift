@@ -1,4 +1,4 @@
-%% Copyright 2016-2017, OpenX.  All rights reserved.
+%% Copyright 2016-2018, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -module(ox_thrift_protocol_compact).
@@ -192,19 +192,39 @@ read_message_begin (Data0) ->
   end.
 
 -spec read_field_begin (IData::binary(), LastId::integer())
-                       -> {OData::binary(), Type::proto_type(), Id::integer()}
-                        | {OData::binary(), field_stop, 'undefined'}.
+                       -> {OData::binary(), field_stop}
+                        | {OData::binary(), bool, Id::integer(), Val::boolean()}
+                        | {OData::binary(), byte, Id::integer(), Val::integer()}
+                        | {OData::binary(), i16 | i32 | i64 | double | struct | map | set | list, Id::integer()}.
 read_field_begin (Data0, LastId) ->
+  %% This function decodes and returns the value when it's "easy" (bool,
+  %% byte), and leaves it to the caller when it's hard.
   case Data0 of
     <<?TYPE_STRUCT_FIELD_STOP:8, Data1/binary>> ->
-      {Data1, field_stop, undefined};
+      {Data1, field_stop};
+    %% long-form header fields (DeltaId is 0, Id is encoded after type field):
+    <<0:4, ?TYPE_STRUCT_FIELD_TRUE:4, Data1/binary>> ->
+      {Data2, IdZ} = read_varint(Data1),
+      {Data2, bool, decode_zigzag(IdZ), true};
+    <<0:4, ?TYPE_STRUCT_FIELD_FALSE:4, Data1/binary>> ->
+      {Data2, IdZ} = read_varint(Data1),
+      {Data2, bool, decode_zigzag(IdZ), true};
+    <<0:4, ?TYPE_STRUCT_FIELD_BYTE:4, Data1/binary>> ->
+      {Data2, IdZ} = read_varint(Data1),
+      <<Val:8/signed, Data3/binary>> = Data2,
+      {Data3, byte, decode_zigzag(IdZ), Val};
+    <<0:4, Type:4, Data1/binary>> ->
+      {Data2, IdZ} = read_varint(Data1),
+      {Data2, wire_to_term_struct(Type), decode_zigzag(IdZ)};
+    %% short-form header fields:
+    <<DeltaId:4, ?TYPE_STRUCT_FIELD_TRUE:4, Data1/binary>> ->
+      {Data1, bool, DeltaId + LastId, true};
+    <<DeltaId:4, ?TYPE_STRUCT_FIELD_FALSE:4, Data1/binary>> ->
+      {Data1, bool, DeltaId + LastId, false};
+    <<DeltaId:4, ?TYPE_STRUCT_FIELD_BYTE:4, Val:8/signed, Data1/binary>> ->
+      {Data1, byte, DeltaId + LastId, Val};
     <<DeltaId:4, Type:4, Data1/binary>> ->
-      if DeltaId =:= 0 ->
-          {Data2, IdZ} = read_varint(Data1),
-          {Data2, wire_to_term_struct(Type), decode_zigzag(IdZ)};
-         true ->
-          {Data1, wire_to_term_struct(Type), DeltaId + LastId}
-      end
+      {Data1, wire_to_term_struct(Type), DeltaId + LastId}
   end.
 
 %% This isn't necessary, since we never explicitly read a `field_stop', we

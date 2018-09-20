@@ -1,4 +1,4 @@
-%% Copyright 2016-2017, OpenX.  All rights reserved.
+%% Copyright 2016-2018, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 -include("ox_thrift_internal.hrl").
@@ -348,30 +348,27 @@ decode_record (Buffer0, Name, {struct, StructDef}, CodecConfig)
 
 -spec decode_struct(BufferIn::binary(), FieldList::list(), codec_config(), Acc::list(), LastId::integer()) -> {binary(), tuple()}.
 decode_struct (Buffer0, FieldList, CodecConfig, Acc, LastId) ->
-  {Buffer1, FieldType, FieldId} = read_field_begin(Buffer0, LastId),
-  case FieldType of
-    field_stop ->
+  case read_field_begin(Buffer0, LastId) of
+    {Buffer1, field_stop} ->
       Record = erlang:make_tuple(length(FieldList)+1, undefined, Acc),
       {Buffer1, Record};
-    _ ->
+    {Buffer1, ReadType, FieldId, Val} ->        % base type with value (boolean, integer, double, binary)
       case keyfind(FieldList, FieldId, 2) of %% inefficient @@
-        {FieldTypeAtom, N} ->
-          {Buffer2, Val} =
-            if ?THRIFT_PROTOCOL =:= compact andalso is_boolean(FieldType) ->
-                ?VALIDATE_TYPE(FieldTypeAtom, bool, [ Buffer0, FieldList, Acc, LastId ]),
-                {Buffer1, FieldType};
-               true ->
-                ?VALIDATE_TYPE(FieldTypeAtom, FieldType, [ Buffer0, FieldList, Acc, LastId ]),
-                decode(Buffer1, FieldTypeAtom, CodecConfig)
-            end,
+        {ExpectedType, N} ->                    %   known field
+          ?VALIDATE_TYPE(ExpectedType, ReadType, [ Buffer0, FieldList, Acc, LastId ]),
+          decode_struct(Buffer1, FieldList, CodecConfig, [ {N, Val} | Acc ], FieldId);
+        false ->                                %   unknown field; skip it
+          decode_struct(Buffer1, FieldList, CodecConfig, Acc, FieldId)
+      end;
+    {Buffer1, ReadType, FieldId} ->             % type without value (struct, set, map, list)
+      case keyfind(FieldList, FieldId, 2) of %% inefficient @@
+        {ExpectedType, N} ->                    %   known field
+          ?VALIDATE_TYPE(ExpectedType, ReadType, [ Buffer0, FieldList, Acc, LastId ]),
+          {Buffer2, Val} = decode(Buffer1, ExpectedType, CodecConfig),
           decode_struct(Buffer2, FieldList, CodecConfig, [ {N, Val} | Acc ], FieldId);
-        false ->
+        false ->                                %   unknown field; skip it
           %% io:format("field ~p not found in ~p\n", [ FieldId, FieldList ]),
-          Buffer2 = if ?THRIFT_PROTOCOL =:= compact andalso is_boolean(FieldType) ->
-                        Buffer1; %% Nothing to skip.
-                       true ->
-                        skip(Buffer1, FieldType)
-                    end,
+          Buffer2 = skip(Buffer1, ReadType),
           decode_struct(Buffer2, FieldList, CodecConfig, Acc, FieldId)
       end
   end.
@@ -435,17 +432,13 @@ skip (Buffer0, Type) when is_atom(Type) ->
 
 -spec skip_struct (Buffer0::binary(), LastId::integer()) -> Buffer1::binary().
 skip_struct (Buffer0, LastId) ->
-  {Buffer1, FieldType, FieldId} = read_field_begin(Buffer0, LastId),
-  case FieldType of
-    field_stop ->
+  case read_field_begin(Buffer0, LastId) of
+    {Buffer1, field_stop} ->
       Buffer1;
-    _ ->
-      Buffer2 =
-        if ?THRIFT_PROTOCOL =:= compact andalso is_boolean(FieldType) ->
-            Buffer1; %% Nothing to skip.
-           true ->
-            skip(Buffer1, FieldType)
-        end,
+    {Buffer1, _ReadType, FieldId, _Val} ->
+      skip_struct(Buffer1, FieldId);
+    {Buffer1, ReadType, FieldId} ->
+      Buffer2 = skip(Buffer1, ReadType),
       skip_struct(Buffer2, FieldId)
   end.
 
