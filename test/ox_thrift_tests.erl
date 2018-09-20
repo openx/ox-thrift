@@ -377,7 +377,7 @@ skip_test (Protocol) ->
                              double_field = 1.25,
                              string_field = <<"zyzyx">>}
             },
-  {ok, Client2, Output2} = ox_thrift_client:call(Client0, missing, [ Input2 ]),
+  {ok, Client2, Output2} = ox_thrift_client:call(Client1, missing, [ Input2 ]),
   ?assertEqual(Expected, Output2),
 
   destroy_client_skip(Client2).

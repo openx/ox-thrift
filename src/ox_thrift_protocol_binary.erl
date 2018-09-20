@@ -15,7 +15,7 @@
 -compile({inline, [ term_to_wire/1
                   , wire_to_term/1
                   , write_message_begin/3
-                  , write_field_begin/3
+                  , write_field_begin/4
                   , write_field_stop/0
                   , write_map_begin/3
                   , write_list_or_set_begin/2
@@ -87,9 +87,22 @@ write_message_begin (Name, Type, SeqId) ->
   NameLen = size(Name),
   <<?VERSION_1/binary, 0, Type, NameLen:32/big-signed, Name/binary, SeqId:32/big-signed>>.
 
-write_field_begin (Type, Id, _LastId) ->
-  TypeWire = term_to_wire(Type),
-  <<TypeWire:8/big-signed, Id:16/big-signed>>.
+write_field_begin (Type, Id, _LastId, Data) ->
+  case Type of
+    bool -> case Data of
+              true              -> <<?TYPE_BOOL:8, Id:16, 1:8>>;
+              false             -> <<?TYPE_BOOL:8, Id:16, 0:8>>
+            end;
+    byte                        -> <<?TYPE_BYTE:8, Id:16, Data:8/signed>>;
+    double                      -> <<?TYPE_DOUBLE:8, Id:16, Data:64/big-signed-float>>;
+    i16                         -> <<?TYPE_I16:8, Id:16, Data:16/signed>>;
+    i32                         -> <<?TYPE_I32:8, Id:16, Data:32/signed>>;
+    i64                         -> <<?TYPE_I64:8, Id:16, Data:64/signed>>;
+    string when is_binary(Data) -> [ <<?TYPE_STRING:8, Id:16, (size(Data)):32>>, Data ];
+    string when is_list(Data)   -> BinData = list_to_binary(Data),
+                                   [ <<?TYPE_STRING:8, Id:16, (size(BinData)):32>>, BinData ];
+    _                           -> {<<(term_to_wire(Type)):8, Id:16>>} %% Tuple signals data not written.
+  end.
 
 write_field_stop () ->
   ?TYPE_STOP.
@@ -273,8 +286,9 @@ message_test () ->
 field_test () ->
   Type = i32,
   Id = 16#7FF0,
+  Value = 12345,
   %% Name is not sent in binary protocol.
-  ?assertMatch({<<>>, Type, Id}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id, 0)), 0)).
+  ?assertEqual({<<>>, Type, Id, Value}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id, 0, Value)), 0)).
 
 map_test () ->
   KType = byte,

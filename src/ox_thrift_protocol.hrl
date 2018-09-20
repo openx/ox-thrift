@@ -230,16 +230,14 @@ encode_struct ([ {FieldId, Type} | FieldRest ], Record, I, LastId) ->
       encode_struct(FieldRest, Record, I+1, LastId);
     Data ->
       FieldTypeId = term_to_typeid(Type),
-      if ?THRIFT_PROTOCOL =:= compact andalso FieldTypeId =:= bool ->
-          %% This is a hack for compact, which encodes the value of a bool in
-          %% the type.
-          [ write_field_begin(Data, FieldId, LastId)
-            %% Bool value is encoded in type, so skip `encode' call.
+      case write_field_begin(FieldTypeId, FieldId, LastId, Data) of
+        {EncodedHeader} ->
+          [ EncodedHeader
+          , encode(Type, Data)
           | encode_struct(FieldRest, Record, I+1, FieldId)
           ];
-         true ->
-          [ write_field_begin(FieldTypeId, FieldId, LastId)
-          , encode(Type, Data)
+        EncodedHeaderAndData ->
+          [ EncodedHeaderAndData
           | encode_struct(FieldRest, Record, I+1, FieldId)
           ]
       end
