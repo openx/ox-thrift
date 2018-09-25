@@ -27,6 +27,8 @@
                   , read/2 ]}).
 -compile(inline_list_funcs).
 
+-dialyzer({no_improper_lists, [ write_field_begin/4, write/2 ]}).
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -define(TYPE_STOP, 0).
@@ -98,9 +100,9 @@ write_field_begin (Type, Id, _LastId, Data) ->
     i16                         -> <<?TYPE_I16:8, Id:16, Data:16/signed>>;
     i32                         -> <<?TYPE_I32:8, Id:16, Data:32/signed>>;
     i64                         -> <<?TYPE_I64:8, Id:16, Data:64/signed>>;
-    string when is_binary(Data) -> [ <<?TYPE_STRING:8, Id:16, (size(Data)):32>>, Data ];
+    string when is_binary(Data) -> [ <<?TYPE_STRING:8, Id:16, (size(Data)):32>> | Data ];
     string when is_list(Data)   -> BinData = list_to_binary(Data),
-                                   [ <<?TYPE_STRING:8, Id:16, (size(BinData)):32>>, BinData ];
+                                   [ <<?TYPE_STRING:8, Id:16, (size(BinData)):32>> | BinData ];
     _                           -> {<<(term_to_wire(Type)):8, Id:16>>} %% Tuple signals data not written.
   end.
 
@@ -124,7 +126,7 @@ write (bool, false) ->
   0;
 
 write (byte, Byte) ->
-  <<Byte:8/big-signed>>;
+  (Byte + 256) rem 256;
 
 write (i16, I16) ->
   <<I16:16/big-signed>>;
@@ -141,11 +143,11 @@ write (double, Double) ->
 write (string, Str) when is_list(Str) ->
   Bin = list_to_binary(Str),
   BinLen = size(Bin),
-  [ <<BinLen:32/big-signed>>, Bin ];
+  [ <<BinLen:32/big-signed>> | Bin ];
 
 write (string, Bin) when is_binary(Bin) ->
   BinLen = size(Bin),
-  [ <<BinLen:32/big-signed>>, Bin ].
+  [ <<BinLen:32/big-signed>> | Bin ].
 
 
 -ifdef(DEBUG_READ).
@@ -303,7 +305,7 @@ list_or_set_test () ->
 
 basic_test () ->
   B = 16#7F,
-  ?assertEqual({<<>>, B}, read(iolist_to_binary(write(byte, B)), byte)),
+  ?assertEqual({<<>>, B}, read(iolist_to_binary([ write(byte, B) ]), byte)),
 
   S = 16#7FFF,
   ?assertEqual({<<>>, S}, read(iolist_to_binary(write(i16, S)), i16)),
