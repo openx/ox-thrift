@@ -110,11 +110,11 @@ write_field_begin (Type, Id, LastId, Data) ->
   if DeltaId > 0 andalso DeltaId < 16 ->
       case Type of
         bool -> case Data of
-                  true  -> [ DeltaId * 16 + ?TYPE_STRUCT_FIELD_TRUE ];
-                  false -> [ DeltaId * 16 + ?TYPE_STRUCT_FIELD_FALSE ]
+                  true  -> DeltaId * 16 + ?TYPE_STRUCT_FIELD_TRUE;
+                  false -> DeltaId * 16 + ?TYPE_STRUCT_FIELD_FALSE
                 end;
         byte            -> [ DeltaId * 16 + ?TYPE_STRUCT_FIELD_BYTE, Data ];
-        _               -> {[ DeltaId * 16 + term_to_wire_struct(Type) ]}
+        _               -> {DeltaId * 16 + term_to_wire_struct(Type)}
       end;
      true ->
       case Type of
@@ -123,7 +123,7 @@ write_field_begin (Type, Id, LastId, Data) ->
                   false -> [ ?TYPE_STRUCT_FIELD_FALSE | write_varint(encode_zigzag(Id)) ]
                 end;
         byte            -> [ ?TYPE_STRUCT_FIELD_BYTE, write_varint(encode_zigzag(Id)), Data ];
-        _               -> {[ term_to_wire_struct(Type), write_varint(encode_zigzag(Id)) ]}
+        _               -> {[ term_to_wire_struct(Type) | write_varint(encode_zigzag(Id)) ]}
       end
   end.
 
@@ -398,13 +398,13 @@ message_test () ->
                read_message_begin(<<?COMPACT_BINARY_HEADER, Type:3, ?COMPACT_BINARY_VERSION:5, SeqIdEnc/binary, NameLen, Name/binary>>)).
 
 field_test () ->
-  ?assertEqual(<<17>>, iolist_to_binary(write_field_begin(bool, 1, 0, true))),
-  ?assertEqual(<<18>>, iolist_to_binary(write_field_begin(bool, 1, 0, false))),
-  ?assertEqual(<<1, 2>>, iolist_to_binary(write_field_begin(bool, 1, 99, true))),
-  ?assertEqual(<<2, 2>>, iolist_to_binary(write_field_begin(bool, 1, 99, false))),
+  ?assertEqual(<<17>>, iolist_to_binary([ write_field_begin(bool, 1, 0, true) ])),
+  ?assertEqual(<<18>>, iolist_to_binary([ write_field_begin(bool, 1, 0, false) ])),
+  ?assertEqual(<<1, 2>>, iolist_to_binary([ write_field_begin(bool, 1, 99, true) ])),
+  ?assertEqual(<<2, 2>>, iolist_to_binary([ write_field_begin(bool, 1, 99, false) ])),
   ?assertEqual(<<19, 123>>, iolist_to_binary(write_field_begin(byte, 1, 0, 123))),
   ?assertEqual(<<3, 2, 123>>, iolist_to_binary(write_field_begin(byte, 1, 99, 123))),
-  ?assertEqual(<<16#25>>, iolist_to_binary(element(1, write_field_begin(i32, 32, 30, not_used)))),
+  ?assertEqual(<<16#25>>, iolist_to_binary([ element(1, write_field_begin(i32, 32, 30, not_used)) ])),
   ?assertEqual(<<16#05, 64>>, iolist_to_binary(element(1, write_field_begin(i32, 32, 0, not_used)))),
 
   %% Type = i32,
