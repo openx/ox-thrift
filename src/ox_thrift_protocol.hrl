@@ -308,10 +308,9 @@ decode (Buffer, {struct, {Schema, StructName}}, CodecConfig)
 decode (Buffer0, _T={list, Type}, CodecConfig) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
-  {Buffer2, List} = decode_list(Buffer1, Type, CodecConfig, [], Size),
-  {Buffer2, List};
+  decode_list(Buffer1, Type, CodecConfig, [], Size);
 
-decode (Buffer0, _T={map, KeyType, ValType}, CodecConfig=#codec_config{map_module=MapModule}) ->
+decode (Buffer0, _T={map, KeyType, ValType}, CodecConfig) ->
   {Buffer1, KType, VType, Size} = read_map_begin(Buffer0),
   if ?THRIFT_PROTOCOL =/= compact orelse Size =/= 0 ->
       %% Types are not sent on wire for compact if size is 0.
@@ -319,14 +318,12 @@ decode (Buffer0, _T={map, KeyType, ValType}, CodecConfig=#codec_config{map_modul
       ?VALIDATE_TYPE(ValType, VType, [ Buffer0, _T ]);
      true -> ok
   end,
-  {Buffer2, List} = decode_map(Buffer1, {KeyType, ValType}, CodecConfig, [], Size),
-  {Buffer2, MapModule:from_list(List)};
+  decode_map(Buffer1, {KeyType, ValType}, CodecConfig, [], Size);
 
 decode (Buffer0, _T={set, Type}, CodecConfig) ->
   {Buffer1, EType, Size} = read_list_or_set_begin(Buffer0),
   ?VALIDATE_TYPE(Type, EType, [ Buffer0, _T ]),
-  {Buffer2, List} = decode_set(Buffer1, Type, CodecConfig, [], Size),
-  {Buffer2, sets:from_list(List)};
+  decode_set(Buffer1, Type, CodecConfig, [], Size);
 
 decode (Buffer0, Type, _) when is_atom(Type) ->
   %% Decode the basic types.
@@ -379,16 +376,18 @@ decode_list (Buffer0, EType, CodecConfig, Acc, N) ->
   decode_list(Buffer1, EType, CodecConfig, [ Elt | Acc ], N - 1).
 
 
--spec decode_map(IBuffer::binary(), {KType::struct_type(), VType::struct_type()}, codec_config(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
-decode_map (Buffer, _, _, Acc, 0) -> {Buffer, Acc};
+-spec decode_map(IBuffer::binary(), {KType::struct_type(), VType::struct_type()}, codec_config(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::term()}.
+decode_map (Buffer, _, CodecConfig, Acc, 0) ->
+  {Buffer, (CodecConfig#codec_config.map_module):from_list(Acc)};
 decode_map (Buffer0, Types={KType, VType}, CodecConfig, Acc, N) ->
   {Buffer1, K} = decode(Buffer0, KType, CodecConfig),
   {Buffer2, V} = decode(Buffer1, VType, CodecConfig),
   decode_map(Buffer2, Types, CodecConfig, [ {K, V} | Acc ], N - 1).
 
 
--spec decode_set(IBuffer::binary(), EType::struct_type(), codec_config(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::list()}.
-decode_set (Buffer, _, _, Acc, 0) -> {Buffer, Acc};
+-spec decode_set(IBuffer::binary(), EType::struct_type(), codec_config(), Acc::list(), N::non_neg_integer()) -> {OBuffer::binary(), Result::term()}.
+decode_set (Buffer, _, _, Acc, 0) ->
+  {Buffer, sets:from_list(Acc)};
 decode_set (Buffer0, EType, CodecConfig, Acc, N) ->
   {Buffer1, Elt} = decode(Buffer0, EType, CodecConfig),
   decode_set(Buffer1, EType, CodecConfig, [ Elt | Acc ], N - 1).
