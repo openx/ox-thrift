@@ -12,12 +12,14 @@
 -define(MAP_SIZE(Term), map_size(Term)).
 -endif.
 
+-compile({inline, [ decode_record/4 ]}).
+
 -dialyer({no_match, [ encode_struct/4, decode/3, decode_struct/5, skip_struct/2 ]}).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 encode_record ({Schema, StructName}, Record) when StructName =:= element(1, Record) ->
-  iolist_to_binary(encode(Schema:struct_info(StructName), Record)).
+  iolist_to_binary(encode(Schema:struct_info(StructName), Record, [])).
 
 decode_record ({Schema, StructName}, Buffer, CodecConfig) ->
   {<<>>, Record} = decode_record(Buffer, StructName, Schema:struct_info(StructName), CodecConfig),
@@ -140,111 +142,92 @@ encode_message (ServiceModule, Function, MessageType, SeqId, Args) ->
   [ write_message_begin(atom_to_binary(Function, latin1), ThriftMessageType, SeqId)
     %% Thrift supports only lists of uniform types, and so it uses a
     %% function-specific struct for a function's argument list.
-  , encode(MessageSpec, ArgsList)
+  , encode(MessageSpec, ArgsList, [])
   ].
 
 
-encode ({struct, StructDef}, Data)
+encode ({struct, StructDef}, Data, Acc)
   when is_list(StructDef), is_tuple(Data), length(StructDef) == size(Data) - 1 ->
   %% Encode a record from a struct definition.
-  encode_struct(StructDef, Data, 2, 0);
+  encode_struct(StructDef, Data, 2, 0, Acc);
 
-encode ({struct, {Schema, StructName}}, Data)
+encode ({struct, {Schema, StructName}}, Data, Acc)
   when is_atom(Schema), is_atom(StructName), is_tuple(Data), element(1, Data) == StructName ->
   %% Encode a record from a schema module.
-  encode(Schema:struct_info(StructName), Data);
+  encode(Schema:struct_info(StructName), Data, Acc);
 
-encode (S={struct, {_Schema, _StructName}}, Data) ->
+encode (S={struct, {_Schema, _StructName}}, Data, _Acc) ->
   error(struct_unmatched, [ S, Data ]);
 
-encode ({list, Type}, Data)
+encode ({list, Type}, Data, Acc)
   when is_list(Data) ->
   %% Encode a list.
-  EltTId = term_to_typeid(Type),
-  [ write_list_or_set_begin(EltTId, length(Data))
-  | [ encode(Type, Elt) || Elt <- Data ]
-  ];
+  write_list_or_set_begin(Type, length(Data),
+                          lists:foldr(fun (Elt, InnerAcc) -> encode(Type, Elt, InnerAcc) end, Acc, Data));
 
-encode ({map, KeyType, ValType}, Data) ->
+encode ({map, KeyType, ValType}, Data, Acc) ->
   %% Encode a map.
-  KeyTId = term_to_typeid(KeyType),
-  ValTId = term_to_typeid(ValType),
   if
     is_list(Data) ->
       %% Encode a proplist as a map.
-      [ write_map_begin(KeyTId, ValTId, length(Data))
-      | lists:foldl(fun ({Key, Val}, Acc) ->
-                        [ encode(KeyType, Key)
-                        , encode(ValType, Val)
-                        | Acc ]
-                    end, [], Data)
-      ];
+      write_map_begin(KeyType, ValType, length(Data),
+                      lists:foldl(fun ({Key, Val}, InnerAcc) ->
+                                      encode(KeyType, Key,
+                                             encode(ValType, Val, InnerAcc))
+                                  end, Acc, Data));
     ?IS_MAP(Data) ->
-      [ write_map_begin(KeyTId, ValTId, ?MAP_SIZE(Data))
-      | maps:fold(fun (Key, Val, Acc) ->
-                      [ encode(KeyType, Key)
-                      , encode(ValType, Val)
-                      | Acc ]
-                  end, [], Data)
-      ];
+      write_map_begin(KeyType, ValType, ?MAP_SIZE(Data),
+                      maps:fold(fun (Key, Val, InnerAcc) ->
+                                    encode(KeyType, Key,
+                                           encode(ValType, Val, InnerAcc))
+                                end, Acc, Data));
     true ->
       %% Encode an Erlang dict as a map.
-      [ write_map_begin(KeyTId, ValTId, dict:size(Data))
-      | dict:fold(fun (Key, Val, Acc) ->
-                      [ encode(KeyType, Key)
-                      , encode(ValType, Val)
-                      | Acc ]
-              end, [], Data)
-      ]
+      write_map_begin(KeyType, ValType, dict:size(Data),
+                      dict:fold(fun (Key, Val, InnerAcc) ->
+                                    encode(KeyType, Key,
+                                          encode(ValType, Val, InnerAcc))
+                                end, Acc, Data))
   end;
 
-encode ({set, Type}, Data) ->
+encode ({set, Type}, Data, Acc) ->
   %% Encode a set.
-  EltType = term_to_typeid(Type),
   if
     is_list(Data) ->
       %% Encode a list as a set.
-      [ write_list_or_set_begin(EltType, length(Data))
-      | lists:foldl(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
-      ];
+      write_list_or_set_begin(Type, length(Data),
+                              lists:foldl(fun (Elt, InnerAcc) ->
+                                              encode(Type, Elt, InnerAcc)
+                                          end, Acc, Data));
     true ->
       %% Encode an Erlang set as a set.
-      [ write_list_or_set_begin(EltType, sets:size(Data))
-      | sets:fold(fun (Elt, Acc) -> [ encode(Type, Elt) | Acc ] end, [], Data)
-      ]
+      write_list_or_set_begin(Type, sets:size(Data),
+                              sets:fold(fun (Elt, InnerAcc) ->
+                                            encode(Type, Elt, InnerAcc)
+                                        end, Acc, Data))
   end;
 
-encode (Type, Data) when is_atom(Type) ->
+encode (Type, Data, Acc) when is_atom(Type) ->
   %% Encode the basic types.
-  write(Type, Data);
+  write(Type, Data, Acc);
 
-encode (Type, Data) ->
+encode (Type, Data, _Acc) ->
   error({invalid_type, {type, Type}, {data, Data}}).
 
 
--spec encode_struct(FieldData::list({integer(), atom()}), Record::tuple(), I::integer(), LastId::integer()) -> IOData::iodata().
-encode_struct ([ {FieldId, Type} | FieldRest ], Record, I, LastId) ->
+-spec encode_struct(FieldData::list({integer(), atom()}), Record::tuple(), I::integer(), LastId::integer(), Acc::iolist()) -> IOData::iolist().
+encode_struct ([ {FieldId, Type} | FieldRest ], Record, I, LastId, Acc) ->
   case element(I, Record) of
     undefined ->
       %% null fields are skipped
-      encode_struct(FieldRest, Record, I+1, LastId);
+      encode_struct(FieldRest, Record, I+1, LastId, Acc);
     Data ->
-      FieldTypeId = term_to_typeid(Type),
-      case write_field_begin(FieldTypeId, FieldId, LastId, Data) of
-        {EncodedHeader} ->
-          [ EncodedHeader
-          , encode(Type, Data)
-          | encode_struct(FieldRest, Record, I+1, FieldId)
-          ];
-        EncodedHeaderAndData ->
-          [ EncodedHeaderAndData
-          | encode_struct(FieldRest, Record, I+1, FieldId)
-          ]
-      end
+      write_field(Type, FieldId, LastId, Data,
+                  encode_struct(FieldRest, Record, I+1, FieldId, Acc))
   end;
 
-encode_struct ([], _Record, _I, _LastId) ->
-  [ write_field_stop() ].
+encode_struct ([], _Record, _I, _LastId, Acc) ->
+  write_field_stop(Acc).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

@@ -15,19 +15,17 @@
 -compile({inline, [ term_to_wire/1
                   , wire_to_term/1
                   , write_message_begin/3
-                  , write_field_begin/4
-                  , write_field_stop/0
-                  , write_map_begin/3
-                  , write_list_or_set_begin/2
-                  , write/2
+                  , write_field/5
+                  , write_field_stop/1
+                  , write_map_begin/4
+                  , write_list_or_set_begin/3
+                  , write/3
                   , read_message_begin/1
                   , read_field_begin/2
                   , read_map_begin/1
                   , read_list_or_set_begin/1
                   , read/2 ]}).
 -compile(inline_list_funcs).
-
--dialyzer({no_improper_lists, [ write_field_begin/4, write/2 ]}).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -53,10 +51,10 @@ term_to_wire(i16)               -> ?TYPE_I16;
 term_to_wire(i32)               -> ?TYPE_I32;
 term_to_wire(i64)               -> ?TYPE_I64;
 term_to_wire(string)            -> ?TYPE_STRING;
-term_to_wire(struct)            -> ?TYPE_STRUCT;
-term_to_wire(map)               -> ?TYPE_MAP;
-term_to_wire(set)               -> ?TYPE_SET;
-term_to_wire(list)              -> ?TYPE_LIST.
+term_to_wire({struct, _})       -> ?TYPE_STRUCT;
+term_to_wire({map, _, _})       -> ?TYPE_MAP;
+term_to_wire({set, _})          -> ?TYPE_SET;
+term_to_wire({list, _})         -> ?TYPE_LIST.
 
 %% wire_to_term(?TYPE_STOP) -> field_stop;
 wire_to_term(?TYPE_BOOL)        -> bool;
@@ -89,65 +87,68 @@ write_message_begin (Name, Type, SeqId) ->
   NameLen = size(Name),
   <<?VERSION_1/binary, 0, Type, NameLen:32/big-signed, Name/binary, SeqId:32/big-signed>>.
 
-write_field_begin (Type, Id, _LastId, Data) ->
+write_field (Type, Id, _LastId, Data, Acc) ->
   case Type of
     bool -> case Data of
-              true              -> <<?TYPE_BOOL:8, Id:16, 1:8>>;
-              false             -> <<?TYPE_BOOL:8, Id:16, 0:8>>
+              true              -> [ <<?TYPE_BOOL:8, Id:16, 1:8>> | Acc ];
+              false             -> [ <<?TYPE_BOOL:8, Id:16, 0:8>> | Acc ]
             end;
-    byte                        -> <<?TYPE_BYTE:8, Id:16, Data:8/signed>>;
-    double                      -> <<?TYPE_DOUBLE:8, Id:16, Data:64/big-signed-float>>;
-    i16                         -> <<?TYPE_I16:8, Id:16, Data:16/signed>>;
-    i32                         -> <<?TYPE_I32:8, Id:16, Data:32/signed>>;
-    i64                         -> <<?TYPE_I64:8, Id:16, Data:64/signed>>;
-    string when is_binary(Data) -> [ <<?TYPE_STRING:8, Id:16, (size(Data)):32>> | Data ];
+    byte                        -> [ <<?TYPE_BYTE:8, Id:16, Data:8/signed>> | Acc ];
+    double                      -> [ <<?TYPE_DOUBLE:8, Id:16, Data:64/big-signed-float>> | Acc ];
+    i16                         -> [ <<?TYPE_I16:8, Id:16, Data:16/signed>> | Acc ];
+    i32                         -> [ <<?TYPE_I32:8, Id:16, Data:32/signed>> | Acc ];
+    i64                         -> [ <<?TYPE_I64:8, Id:16, Data:64/signed>> | Acc ];
+    string when is_binary(Data) -> [ <<?TYPE_STRING:8, Id:16, (size(Data)):32>>, Data | Acc ];
     string when is_list(Data)   -> BinData = list_to_binary(Data),
-                                   [ <<?TYPE_STRING:8, Id:16, (size(BinData)):32>> | BinData ];
-    _                           -> {<<(term_to_wire(Type)):8, Id:16>>} %% Tuple signals data not written.
+                                   [ <<?TYPE_STRING:8, Id:16, (size(BinData)):32>>, BinData | Acc ];
+    {struct, _}                 -> [ <<?TYPE_STRUCT:8, Id:16>> | encode(Type, Data, Acc) ];
+    {set, _}                    -> [ <<?TYPE_SET:8, Id:16>> | encode(Type, Data, Acc) ];
+    {list, _}                   -> [ <<?TYPE_LIST:8, Id:16>> | encode(Type, Data, Acc) ];
+    {map, _, _}                 -> [ <<?TYPE_MAP:8, Id:16>> | encode(Type, Data, Acc) ]
   end.
 
-write_field_stop () ->
-  ?TYPE_STOP.
+write_field_stop (Acc) ->
+  [ ?TYPE_STOP | Acc ].
 
-write_map_begin (KType, VType, Size) ->
+write_map_begin (KType, VType, Size, Acc) ->
   KTypeWire = term_to_wire(KType),
   VTypeWire = term_to_wire(VType),
-  <<KTypeWire:8/big-signed, VTypeWire:8/big-signed, Size:32/big-signed>>.
+  [ <<KTypeWire:8/big-signed, VTypeWire:8/big-signed, Size:32/big-signed>> | Acc ].
 
-write_list_or_set_begin (EType, Size) ->
+write_list_or_set_begin (EType, Size, Acc) ->
   ETypeWire = term_to_wire(EType),
-  <<ETypeWire:8/big-signed, Size:32/big-signed>>.
+  [ <<ETypeWire:8/big-signed, Size:32/big-signed>> | Acc ].
 
 
-write (bool, true) ->
-  1;
+write (bool, true, Acc) ->
+  [ 1 | Acc ];
 
-write (bool, false) ->
-  0;
+write (bool, false, Acc) ->
+  [ 0 | Acc ];
 
-write (byte, Byte) ->
-  (Byte + 256) rem 256;
+write (byte, Byte, Acc) ->
+  [ (Byte + 256) rem 256 | Acc ];
 
-write (i16, I16) ->
-  <<I16:16/big-signed>>;
+write (i16, I16, Acc) ->
+  [ <<I16:16/big-signed>> | Acc ];
 
-write (i32, I32) ->
-  <<I32:32/big-signed>>;
+write (i32, I32, Acc) ->
+  [ <<I32:32/big-signed>> | Acc ];
 
-write (i64, I64) ->
-  <<I64:64/big-signed>>;
+write (i64, I64, Acc) ->
+  [ <<I64:64/big-signed>>| Acc ];
 
-write (double, Double) ->
-  <<Double:64/big-signed-float>>;
+write (double, Double, Acc) ->
+  [ <<Double:64/big-signed-float>> | Acc ];
 
-write (string, Str) when is_list(Str) ->
+write (string, Str, Acc) when is_list(Str) ->
   Bin = list_to_binary(Str),
   BinLen = size(Bin),
-  [ <<BinLen:32/big-signed>> | Bin ];
+  [ <<BinLen:32/big-signed>>, Bin | Acc ];
 
-write (string, Bin) when is_binary(Bin) ->
+write (string, Bin, Acc) when is_binary(Bin) ->
   BinLen = size(Bin),
-  [ <<BinLen:32/big-signed>> | Bin ].
+  [ <<BinLen:32/big-signed>>, Bin | Acc ].
 
 
 -ifdef(DEBUG_READ).
@@ -290,36 +291,36 @@ field_test () ->
   Id = 16#7FF0,
   Value = 12345,
   %% Name is not sent in binary protocol.
-  ?assertEqual({<<>>, Type, Id, Value}, read_field_begin(iolist_to_binary(write_field_begin(Type, Id, 0, Value)), 0)).
+  ?assertEqual({<<>>, Type, Id, Value}, read_field_begin(iolist_to_binary(write_field(Type, Id, 0, Value, [])), 0)).
 
 map_test () ->
   KType = byte,
   VType = string,
   Size = 16#7FFFFFF1,
-  ?assertEqual({<<>>, KType, VType, Size}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size)))).
+  ?assertEqual({<<>>, KType, VType, Size}, read_map_begin(iolist_to_binary(write_map_begin(KType, VType, Size, [])))).
 
 list_or_set_test () ->
   EType = byte,
   Size = 16#7FFFFFF2,
-  ?assertEqual({<<>>, EType, Size}, read_list_or_set_begin(iolist_to_binary(write_list_or_set_begin(EType, Size)))).
+  ?assertEqual({<<>>, EType, Size}, read_list_or_set_begin(iolist_to_binary(write_list_or_set_begin(EType, Size, [])))).
 
 basic_test () ->
   B = 16#7F,
-  ?assertEqual({<<>>, B}, read(iolist_to_binary([ write(byte, B) ]), byte)),
+  ?assertEqual({<<>>, B}, read(iolist_to_binary([ write(byte, B, []) ]), byte)),
 
   S = 16#7FFF,
-  ?assertEqual({<<>>, S}, read(iolist_to_binary(write(i16, S)), i16)),
+  ?assertEqual({<<>>, S}, read(iolist_to_binary(write(i16, S, [])), i16)),
 
   I = 16#7FFFFFFF,
-  ?assertEqual({<<>>, I}, read(iolist_to_binary(write(i32, I)), i32)),
+  ?assertEqual({<<>>, I}, read(iolist_to_binary(write(i32, I, [])), i32)),
 
   F = 1234.25,
-  ?assertEqual({<<>>, F}, read(iolist_to_binary(write(double, F)), double)),
+  ?assertEqual({<<>>, F}, read(iolist_to_binary(write(double, F, [])), double)),
 
   SB = <<"hello, world">>,
-  ?assertEqual({<<>>, SB}, read(iolist_to_binary(write(string, SB)), string)),
+  ?assertEqual({<<>>, SB}, read(iolist_to_binary(write(string, SB, [])), string)),
 
   SL = "hello, world",
-  ?assertEqual({<<>>, SB}, read(iolist_to_binary(write(string, SL)), string)).
+  ?assertEqual({<<>>, SB}, read(iolist_to_binary(write(string, SL, [])), string)).
 
 -endif. %% EUNIT
