@@ -163,7 +163,7 @@ encode ({list, Type}, Data, Acc)
   when is_list(Data) ->
   %% Encode a list.
   write_list_or_set_begin(Type, length(Data),
-                          lists:foldr(fun (Elt, InnerAcc) -> encode(Type, Elt, InnerAcc) end, Acc, Data));
+                          foldr_encode(Type, Acc, Data));
 
 encode ({map, KeyType, ValType}, Data, Acc) ->
   %% Encode a map.
@@ -424,6 +424,10 @@ skip_struct (Buffer0, LastId) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+foldr_encode (Type, Acc, [ H | T ]) ->
+    encode(Type, H, foldr_encode(Type, Acc, T));
+foldr_encode (_Type, Acc, []) -> Acc.
 
 foldn (F, Acc, N) when N > 0 ->
   foldn(F, F(Acc), N-1);

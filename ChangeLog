@@ -1,3 +1,7 @@
+* Fri Sep 28 2018 David Hull <david.hull@openx.com> 0.14.1
+- Further optimize encoding.  This change gives about a 25% cumulative
+  improvement in encoding time since version 0.13.1.
+
 * Wed Sep 26 2018 David Hull <david.hull@openx.com> 0.14.0
 - Optimize decoding and encoding of struct fields.  These changes give about a
   15% improvement in decoding and encoding times since version 0.13.1.
