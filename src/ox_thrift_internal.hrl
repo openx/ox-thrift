@@ -12,6 +12,7 @@
           codec_config = #codec_config{} :: codec_config(),
           recv_timeout = 'infinity' :: non_neg_integer() | 'infinity',
           max_message_size = 'infinity' :: pos_integer() | 'infinity',
+          spawn_options :: 'undefined' | list(),
           stats_module :: atom() }).
 
 -type message_type() :: 'call' | 'call_oneway' | 'reply_normal' | 'reply_exception' | 'exception'.

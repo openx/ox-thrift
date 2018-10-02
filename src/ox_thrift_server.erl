@@ -63,6 +63,12 @@ parse_options ([ {max_message_size, MaxMessageSize} | Options ], Config)
   parse_options(Options, Config#ts_config{max_message_size = MaxMessageSize});
 parse_options ([ {stats_module, StatsModule} | Options ], Config) when is_atom(StatsModule) ->
   parse_options(Options, Config#ts_config{stats_module = StatsModule});
+parse_options ([ {spawn_options, SpawnOptions} | Options ], Config)
+  when is_list(SpawnOptions) orelse SpawnOptions =:= undefined ->
+  SO = if is_list(SpawnOptions) -> [ link | SpawnOptions ];
+          true                  -> SpawnOptions
+       end,
+  parse_options(Options, Config#ts_config{spawn_options = SO});
 parse_options ([], Config) ->
   Config.
 
@@ -126,7 +132,15 @@ loop3 (State, Function, ReplyOptions) ->
 
 
 -spec handle_request(Config::#ts_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom(), ReplyOptions::reply_options()}.
-handle_request (Config=#ts_config{protocol_module=ProtocolModule, handler_module=HandlerModule}, RequestData) ->
+handle_request (Config=#ts_config{spawn_options=SpawnOptions}, RequestData) when is_list(SpawnOptions) ->
+  Parent = self(),
+  Child = spawn_opt(fun () -> Parent ! {self(), handle_request2(Config, RequestData)} end, SpawnOptions),
+  receive {Child, Result} -> Result end;
+handle_request (Config, RequestData) ->
+  handle_request2(Config, RequestData).
+
+
+handle_request2 (Config=#ts_config{protocol_module=ProtocolModule, handler_module=HandlerModule}, RequestData) ->
   Protocol = detect_protocol(RequestData, ProtocolModule),
 
   %% Should do a try block around decode_message. @@
