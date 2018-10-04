@@ -17,6 +17,7 @@
 -define(HANDLER, ?MODULE).
 -define(STATS_MODULE, ?MODULE).
 -define(STATS_TABLE, ox_thrift_stats).
+-define(GLOBALS_TABLE, ox_thrift_globals).
 -define(RECV_TIMEOUT_CLIENT, 200).
 
 new_client_direct (Protocol) ->
@@ -67,13 +68,13 @@ destroy_client_skip (Client) ->
 
 create_stats_table () ->
   case ets:info(?STATS_TABLE, size) of
-    Size when is_integer(Size) ->
-      %% Table already exists.  EUnit runs tests in parallel, so it's easier
-      %% to just create the ets table if it doesn't exist than to create and
-      %% destroy the table for each test.
-      ok;
     undefined ->
-      ets:new(?STATS_TABLE, [ named_table, public ])
+      %% Table doesn't exist.  EUnit runs tests in parallel, so it's easier to
+      %% just create the ets table if it doesn't exist than to create and
+      %% destroy the table for each test.
+      ets:new(?STATS_TABLE, [ named_table, public ]);
+    Size when is_integer(Size) ->
+      ok
   end.
 
 destroy_stats_table () ->
@@ -292,7 +293,7 @@ cast_ignores_exception_test (_TestType, _MapModule, NewClientFun, DestroyClientF
 cast_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
   Client0 = NewClientFun(),
 
-  Message = <<"hello, world">>,
+  Message = list_to_binary(io_lib:format("~p\n", [ make_ref() ])),
   {ok, Client1, Reply1} = ox_thrift_client:call(Client0, put, [ Message ]),
   %% ?assertNotEqual(undefined, ox_thrift_client:get_socket(Client1)), FIXME
   ?assertEqual(ok, Reply1),
@@ -402,8 +403,8 @@ handle_function (Function, Args) ->
   case Function of
     add_one -> [ In ] = Args, {reply, In + 1};
     wait    -> [ Milliseconds ] = Args, timer:sleep(Milliseconds), ok;
-    put     -> [ Message ] = Args, io:format("~p\n", [ Message ]), put(message, Message), ok;
-    get     -> {reply, get(message)};
+    put     -> [ Message ] = Args, put_ets(Message), ok;
+    get     -> {reply, get_ets()};
     swapkv  -> [ RetType, Dict ] = Args,
                Proplist = dict:fold(fun (K, V, Acc) -> [ {V, K} | Acc ] end, [], Dict),
                Reply = case RetType of
@@ -437,6 +438,33 @@ handle_stats (Function, Stats) ->
           end,
         incr_stat(Key, Increment)
     end, Stats).
+
+
+%% We use an ets table to store the global for the cast get and put tests so
+%% that the tests work even when the spawn_options ox_thrift_server option is
+%% used.
+
+ensure_ets () ->
+  case ets:info(?GLOBALS_TABLE, size) of
+    undefined ->
+      %% We have to make the table public because it ends up being shared among
+      %% all of the servers we start.
+      ets:new(?GLOBALS_TABLE, [ named_table, public ]);
+    Size when is_integer(Size) ->
+      ok
+  end.
+
+put_ets (Value) ->
+  ensure_ets(),
+  ets:insert(?GLOBALS_TABLE, {value, Value}).
+
+get_ets () ->
+  ensure_ets(),
+  case ets:lookup(?GLOBALS_TABLE, value) of
+    [ {_, Value} ] -> Value;
+    []             -> <<>>
+  end.
+
 
 incr_stat (skip, _Increment) -> ok;
 incr_stat (Key, Increment) ->
