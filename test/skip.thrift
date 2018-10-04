@@ -80,6 +80,8 @@ service SkipService {
   map<string,i32> swapkv(1: MapRet return_type, 2: map<i32,string> input)
 
   MissingFields missing(1: MissingFields missing)
+
+  oneway void throw_exception_oneway()
 }
 
 // Local Variables:

@@ -145,11 +145,19 @@ handle_request (Config=#ts_config{protocol_module=ProtocolModule, handler_module
       {R, ReplyOptions0}
     catch
       throw:Reason when is_tuple(Reason) ->
-        {encode(Config, Protocol, Function, reply_exception, SeqId, Reason), undefined};
+        case CallType of
+          call        -> {encode(Config, Protocol, Function, reply_exception, SeqId, Reason), undefined};
+          call_oneway -> %% If a oneway function returns an exception perhaps we should close the connection. @@
+                         {noreply, undefined}
+        end;
       ErrorOrThrow:Reason when ErrorOrThrow =:= error; ErrorOrThrow =:= throw ->
-        Message = ox_thrift_util:format_error_message(ErrorOrThrow, Reason),
-        ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
-        {encode(Config, Protocol, Function, exception, SeqId, ExceptionReply), undefined}
+        case CallType of
+          call        -> Message = ox_thrift_util:format_error_message(ErrorOrThrow, Reason),
+                         ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
+                         {encode(Config, Protocol, Function, exception, SeqId, ExceptionReply), undefined};
+          call_oneway -> %% If a oneway function returns an exception perhaps we should close the connection. @@
+                         {noreply, undefined}
+        end
     end,
 
   %% ?LOG("handle_request -> ~p\n", [ {ResultMsg, Function } ]),

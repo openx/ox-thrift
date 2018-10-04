@@ -12,6 +12,6 @@ format_error_message (Reason) ->
 -spec format_error_message(Type::'error'|'throw', Reason::term()) -> Message::binary().
 format_error_message (Type, Reason) when is_atom(Type) ->
   case application:get_env(ox_thrift, exceptions_include_traces) of
-    {ok, true} -> list_to_binary(io_lib:format("An error occurred: ~s:~p ~p~n", [ Type, Reason, erlang:get_stacktrace() ]));
+    {ok, true} -> list_to_binary(io_lib:format("An error occurred: ~s:~p ~9999p~n", [ Type, Reason, erlang:get_stacktrace() ]));
     _          -> list_to_binary(io_lib:format("An error occurred: ~s:~p", [ Type, Reason ]))
   end.

@@ -11,7 +11,7 @@
 -behaviour(ox_thrift_server).
 
 -export([ handle_function/2, handle_error/2, handle_stats/2 ]).
--export([ sum_ints/2, echo/1, throw_exception/1 ]). % Export so that compiler doesn't complain about unused function.
+-export([ sum_ints/2, echo/1, throw_exception/1, throw_exception_oneway/0 ]).
 
 -define(SERVICE, test_service_thrift).
 -define(HANDLER, ?MODULE).
@@ -138,6 +138,7 @@ make_tests (TestType, MapModule, NewClient, DestroyClient) ->
   , ?F(sum_ints_test)
   , ?F(all_types_test)
   , ?F(throw_exception_test)
+  , ?F(cast_ignores_exception_test)
   , ?F(cast_test)
   , ?F(proplist_as_map_test)
   , ?F(map_as_map_test)
@@ -274,6 +275,18 @@ throw_exception_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
   ?assertMatch(#application_exception{type=?tApplicationException_UNKNOWN}, Reply5),
 
   DestroyClientFun(Client4).
+
+
+cast_ignores_exception_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
+  Client0 = NewClientFun(),
+
+  {ok, Client1, Reply1} = ox_thrift_client:call(Client0, throw_exception_oneway, []),
+  ?assertEqual(ok, Reply1),
+
+  {ok, Client2, Reply2} = ox_thrift_client:call(Client1, add_one, [ 1 ]),
+  ?assertEqual(2, Reply2),
+
+  DestroyClientFun(Client2).
 
 
 cast_test (_TestType, _MapModule, NewClientFun, DestroyClientFun) ->
@@ -468,3 +481,6 @@ throw_exception (ThrowType) ->
     ?TEST_THROWTYPE_ERROR               -> error(unhandled_error);
     ?TEST_THROWTYPE_BADTHROW            -> throw(not_a_tuple)
   end.
+
+throw_exception_oneway () ->
+  error(unhandled_error).

@@ -98,8 +98,17 @@ function_info('missing', reply_type) ->
 function_info('missing', exceptions) ->
   {struct, []}
 ;
+% throw_exception_oneway(This)
+function_info('throw_exception_oneway', params_type) ->
+  {struct, []}
+;
+function_info('throw_exception_oneway', reply_type) ->
+  oneway_void;
+function_info('throw_exception_oneway', exceptions) ->
+  {struct, []}
+;
 function_info(_Func, _Info) -> erlang:error(function_clause).
 
 function_names() -> 
-  ['add_one', 'sum_ints', 'echo', 'throw_exception', 'wait', 'put', 'get', 'swapkv', 'missing'].
+  ['add_one', 'sum_ints', 'echo', 'throw_exception', 'wait', 'put', 'get', 'swapkv', 'missing', 'throw_exception_oneway'].
 

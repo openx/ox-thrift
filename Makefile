@@ -1,6 +1,7 @@
 # -*- mode: makefile-gmake -*-
 
 REBAR3=rebar3
+# export ERL_COMPILER_OPTIONS=bin_opt_info
 
 all:
 	$(REBAR3) compile
