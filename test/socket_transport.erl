@@ -7,7 +7,7 @@
 -include("../src/ox_thrift_internal.hrl").
 
 -export([ send/2, recv/3 ]).                    % transport functions
--export([ start_server/5, stop_server/0 ]).     % server functions
+-export([ start_server/6, stop_server/0 ]).     % server functions
 
 send (Socket, Data) ->
   DataBin = list_to_binary(Data),
@@ -31,15 +31,16 @@ start_application (Application) ->
     Error                                 -> error(Error)
   end.
 
-start_server (Port, ServiceModule, ProtocolModule, HandlerModule, StatsModule) ->
-  lists:foreach(fun start_application/1, [ asn1, public_key, ssl, ranch ]),
+start_server (Port, ServiceModule, ProtocolModule, HandlerModule, StatsModule, Options) ->
+  lists:foreach(fun start_application/1, [ asn1, public_key, ssl, ranch, ox_thrift ]),
 
   Config = #ox_thrift_config{
               service_module = ServiceModule,
               protocol_module = ProtocolModule,
               handler_module = HandlerModule,
               options = [ {recv_timeout, 100}
-                        , {stats_module, StatsModule} ] },
+                        , {stats_module, StatsModule}
+                        | Options ] },
   case ranch:start_listener(?SERVICE_REF, 2, ranch_tcp, [ {port, Port} ], ox_thrift_server, Config) of
     {ok, _} -> ok;
     {error,{already_started,_}} -> ok

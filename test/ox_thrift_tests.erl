@@ -36,11 +36,11 @@ destroy_client_direct (Client) ->
 -define(PORT, 8024).
 -define(PROTOCOL, ox_thrift_protocol_binary).
 
-new_client_socket () -> new_client_socket(dict).
+new_client_socket () -> new_client_socket(dict, []).
 
-new_client_socket (MapModule) ->
+new_client_socket (MapModule, Options) ->
   create_stats_table(),
-  socket_transport:start_server(?PORT, ?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE),
+  socket_transport:start_server(?PORT, ?SERVICE, ?PROTOCOL, ?HANDLER, ?STATS_MODULE, Options),
   ConnectionState = ox_thrift_reconnecting_socket:new({?LOCALHOST, ?PORT}),
   {ok, Client} = ox_thrift_client:new(ox_thrift_reconnecting_socket, ConnectionState, socket_transport, ?PROTOCOL, ?SERVICE,
                                       [ {map_module, MapModule}, {recv_timeout, ?RECV_TIMEOUT_CLIENT} ]),
@@ -93,11 +93,15 @@ direct_compact_test_ () ->
   make_tests(direct, dict, fun () -> new_client_direct(ox_thrift_protocol_compact) end, fun destroy_client_direct/1).
 
 socket_dict_test_ () ->
-  make_tests(socket, dict, fun () -> new_client_socket(dict) end, fun destroy_client_socket/1).
+  make_tests(socket, dict, fun () -> new_client_socket(dict, []) end, fun destroy_client_socket/1).
+
+socket_spawn_test_ () ->
+  %% Tests the spawn_options option of ox_thrift_server.
+  make_tests(socket, dict, fun () -> new_client_socket(dict, [ {spawn_options, []} ]) end, fun destroy_client_socket/1).
 
 -ifndef(OXTHRIFT_NO_MAPS).
 socket_maps_test_ () ->
-  make_tests(socket, maps, fun () -> new_client_socket(maps) end, fun destroy_client_socket/1).
+  make_tests(socket, maps, fun () -> new_client_socket(maps, []) end, fun destroy_client_socket/1).
 -endif. %% not OXTHRIFT_NO_MAPS
 
 timeout_server_test () ->
