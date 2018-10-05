@@ -1,3 +1,8 @@
+* Fri Oct 5 2018 Kenan Gillet <kenan.gillet@openx.com> 0.15.0
+- Add ox_thrift_server spawn_options option, which causes a new process to be
+  spawned to handle each Thrift function call.  At OpenX this gives another 4%
+  improvement in encoding and decoding since version 0.14.1 when it is used.
+
 * Fri Sep 28 2018 David Hull <david.hull@openx.com> 0.14.1
 - Further optimize encoding.  This change gives about a 25% cumulative
   improvement in encoding time since version 0.13.1.
@@ -12,7 +17,7 @@
 - Avoid an extra list when encoding collections in protocol modules.
 
 * Mon Aug 27 2018 David Hull <david.hull@openx.com> 0.13.0
-- Fix skipping of unknown structs.
+- Fix skipping of unknown structs when decoding.
 
 * Tue Aug 21 2018 David Hull <david.hull@openx.com> 0.12.0
 - Improve specs and add some guards to ox_thrift_socket_pool.

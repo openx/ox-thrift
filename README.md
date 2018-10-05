@@ -253,6 +253,25 @@ The statistics currently collected are:
 * `connect_time`: The total connect time in microseconds.
 * `call_count`: The number of calls to the Thrift server.
 
+#### Spawning a New Process for Each Thrift Call
+
+Normally, Ranch will start a OX Thrift server process for each client
+connection, and all the processing for any Thrift calls will be done in this
+server process.  If the OX Thrift server is started with the `spawn_options`
+option, however, a new process will be spawned and linked to handle each
+request, with the value of the `spawn_options` passed as the second argument
+to the `spawn_opt/2` call.  If processing the Thrift call generates a lot of
+garbage it can be more efficient to release it all when the process exits than
+to let the Erlang runtime do garbage collection on a long-running process.
+
+``` erlang
+#ox_thrift_config{options = [ { spawn_options, [] } ]}
+```
+
+If you use this option, you may want to determine the typical heap size of a
+handler process (perhaps by calling `process_info(self(), heap_size)` in a
+`handle_stats` function) and specify it as the min_heap_size in the
+`spawn_options`.
 
 ### Direct Encoding and Decoding of Records to and from Binaries
 
