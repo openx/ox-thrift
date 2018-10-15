@@ -1,3 +1,6 @@
+* Mon Oct 15 2018 David Hull <david.hull@openx.com> 0.16.0
+- Convert reply to binary when spawning ox_thrift_server handle_function call.
+
 * Fri Oct 5 2018 Kenan Gillet <kenan.gillet@openx.com> 0.15.0
 - Add ox_thrift_server spawn_options option, which causes a new process to be
   spawned to handle each Thrift function call.  At OpenX this gives another 4%

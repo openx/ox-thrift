@@ -131,11 +131,18 @@ loop3 (State, Function, ReplyOptions) ->
   end.
 
 
--spec handle_request(Config::#ts_config{}, RequestData::binary()) -> {Reply::iolist()|'noreply', Function::atom(), ReplyOptions::reply_options()}.
+-spec handle_request(Config::#ts_config{}, RequestData::binary()) -> {ReplyData::iodata()|'noreply', Function::atom(), ReplyOptions::reply_options()}.
 handle_request (Config=#ts_config{spawn_options=SpawnOptions}, RequestData) when is_list(SpawnOptions) ->
   Parent = self(),
-  Child = spawn_opt(fun () -> Parent ! {self(), handle_request2(Config, RequestData)} end, SpawnOptions),
-  receive {Child, Result} -> Result end;
+  Child = spawn_opt(
+            fun () ->
+                RespMsg = case handle_request2(Config, RequestData) of
+                            R={ReplyData, _, _} when is_list(ReplyData) -> setelement(1, R, list_to_binary(ReplyData));
+                            R                                           -> R
+                          end,
+                Parent ! {self(), RespMsg}
+            end, SpawnOptions),
+  receive {Child, Response} -> Response end;
 handle_request (Config, RequestData) ->
   handle_request2(Config, RequestData).
 
