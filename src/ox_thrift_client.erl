@@ -7,6 +7,7 @@
 -include("ox_thrift_internal.hrl").
 
 -define(MAX_TRIES, 2).
+-define(RECV_LIMIT, 60 * 1024 * 1024).          % gen_tcp:recv max length
 
 -export([ new/5, new/6, get_connection_module/1, get_connection_state/1, get_seqid/1, call/3 ]).
 -export_type([ ox_thrift_client/0 ]).
@@ -147,7 +148,7 @@ call3 (Client=#ox_thrift_client{transport_module=Transport, recv_timeout=RecvTim
   case Transport:recv(Socket, 4, RecvTimeout) of
     {ok, LengthBin} ->
       <<Length:32/integer-signed-big>> = LengthBin,
-      case Transport:recv(Socket, Length, RecvTimeout) of
+      case transport_recv(Transport, Socket, Length, RecvTimeout) of
         {ok, ReplyData}         -> call4(Client, Socket, ReplyData);
         {error, ReasonRecvData} -> {error, checkin(Client, Socket, error), ReasonRecvData}
       end;
@@ -177,4 +178,18 @@ checkin (Client=#ox_thrift_client{connection_module=Connection, connection_state
     ok     -> Client#ox_thrift_client{connection_state = Connection:checkin(ConnectionState, Socket, ok), seqid = SeqId + 1};
     closed -> Client#ox_thrift_client{connection_state = Connection:checkin(ConnectionState, Socket, close)};
     error  -> Client#ox_thrift_client{connection_state = Connection:checkin(ConnectionState, Socket, close), seqid = 0}
+  end.
+
+transport_recv (Transport, Socket, Length, RecvTimeout) when Length < ?RECV_LIMIT ->
+  Transport:recv(Socket, Length, RecvTimeout);
+transport_recv (Transport, Socket, Length, RecvTimeout) ->
+  transport_recv_large(Transport, Socket, Length, RecvTimeout, []).
+
+transport_recv_large (_Transport, _Socket, 0, _RecvTimeout, Acc) ->
+  {ok, list_to_binary(lists:reverse(Acc))};
+transport_recv_large (Transport, Socket, Length, RecvTimeout, Acc) ->
+  RecvLength = min(Length, ?RECV_LIMIT),
+  case Transport:recv(Socket, RecvLength, RecvTimeout) of
+    {ok, ReplyData} -> transport_recv_large(Transport, Socket, Length - RecvLength, RecvTimeout, [ ReplyData | Acc ]);
+    Error={error, _} -> Error
   end.
