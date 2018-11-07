@@ -17,8 +17,8 @@ TAGS: src/*.erl src/*.hrl _build/default/lib
 	etags $$(find src _build/default/lib \( -name '*.erl' -o -name '*.hrl' \) -print)
 
 clean:
-	$(REBAR3) clean
-	rm -rf _build/*/lib/ox_thrift
+	if test -d _build; then $(REBAR3) clean; fi
+	rm -rf _build/*/lib/ox_thrift ebin .rebar3
 
 maintainer-clean: clean
 	rm -rf _build TAGS
