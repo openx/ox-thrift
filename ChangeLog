@@ -1,3 +1,6 @@
+* Mon Apr 29 2019 David Hull <david.hull@openx.com> 0.17.0
+- Update for ranch 1.7.1.  Ranch >= 1.6.0 is now required.
+
 * Tue Nov 6 2018 David Hull <david.hull@openx.com> 0.16.1
 - Fix for ox_thrift_client gen_tcp:recv enomem error when response is more
   than 64 MB.

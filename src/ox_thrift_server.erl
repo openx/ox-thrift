@@ -8,9 +8,9 @@
 
 -behaviour(ranch_protocol).
 
--export([ start_link/4, handle_request/2 ]).
--export([ init/4 ]).
--export([ parse_config/1 ]). %% Exported for unit tests.
+-export([ start_link/4 ]).                      % ranch_protocol behaviour.
+-export([ init/3 ]).
+-export([ parse_config/1, handle_request/2 ]).  % Exported for unit tests.
 
 -record(ts_state, {
           socket,
@@ -28,14 +28,14 @@
 -callback handle_error(Function::atom(), Reason::term()) -> Ignored::term().
 
 
-start_link (Ref, Socket, Transport, Opts) ->
-  Pid = spawn_link(?MODULE, init, [ Ref, Socket, Transport, Opts ]),
+start_link (Ref, _Socket, Transport, Opts) ->
+  Pid = spawn_link(?MODULE, init, [ Ref, Transport, Opts ]),
   {ok, Pid}.
 
 
-init (Ref, Socket, Transport, Config) ->
-  ?LOG("ox_thrift_server:init ~p ~p ~p ~p\n", [ Ref, Socket, Transport, Config ]),
-  ok = ranch:accept_ack(Ref),
+init (Ref, Transport, Config) ->
+  ?LOG("ox_thrift_server:init ~p ~p ~p\n", [ Ref, Transport, Config ]),
+  {ok, Socket} = ranch:handshake(Ref),
   Transport:setopts(Socket, [ {nodelay, true} ]),
 
   TSConfig = parse_config(Config),
