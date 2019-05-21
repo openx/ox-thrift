@@ -1,3 +1,7 @@
+* Tue May 21 2019 David Hull <david.hull@openx.com> 0.18.0
+- Add a max_age_jitter_ms option to ox_thrift_socket_pool to add some
+  randomness to max_age_ms with a default of 20%.
+
 * Mon Apr 29 2019 David Hull <david.hull@openx.com> 0.17.0
 - Update for ranch 1.7.1.  Ranch >= 1.6.0 is now required.
 

@@ -102,6 +102,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           port = error({required, port}) :: inet:port_number(),
           connect_timeout_ms = infinity :: pos_integer() | 'infinity',
           max_age_ms = infinity :: pos_integer() | 'infinity',
+          max_age_jitter_ms :: non_neg_integer() | 'undefined',
           max_connections = infinity :: pos_integer() | 'infinity',
           remaining_connections = ?INFINITY :: non_neg_integer(),
           idle = 0 :: non_neg_integer(),
@@ -129,6 +130,13 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 %% `{max_age_seconds, Seconds}' specifies how old a connection may be before
 %% it is closed.
 %%
+%% `{max_age_jitter_ms, Milliseconds}' specifies a random extra amount of time
+%% that is added to `max_age_seconds' so that when a burst of traffic causes a
+%% lot of connections to be opened in a short period of time those connections
+%% are not all also closed at the same time..  It defaults to 20% of
+%% `max_age_seconds' if not specified.  You can specify a value of 0 if you
+%% don't want any jitter added.
+%%
 %% `{max_connections, Count}' specifies the maximum size of the connection
 %% pool.  If Count sockets are already checked out, calls to `checkout' will
 %% fail until until a socket is checked in.
@@ -143,7 +151,14 @@ start_link (Id, Host, Port, Options) ->
       infinity       -> ?INFINITY;
       MaxConnections -> MaxConnections
     end,
-  State = State1#state{remaining_connections = RemainingConnections},
+  MaxAgeJitterMS =
+    case State1 of
+      #state{max_age_ms=infinity}                        -> undefined;
+      #state{max_age_ms=MA, max_age_jitter_ms=undefined} -> round(MA * 0.10);
+      #state{max_age_jitter_ms=MAJ}                      -> MAJ
+    end,
+  State = State1#state{remaining_connections = RemainingConnections,
+                       max_age_jitter_ms = MaxAgeJitterMS},
 
   gen_server:start_link({local, Id}, ?MODULE, State, []).
 
@@ -188,6 +203,9 @@ parse_options ([ {connect_timeout_ms, ConnectTimeout} | Rest ], State)
 parse_options ([ {max_age_seconds, MaxAge} | Rest ], State)
   when is_integer(MaxAge), MaxAge > 0; MaxAge =:= infinity ->
   parse_options(Rest, State#state{max_age_ms = MaxAge * ?K});
+parse_options ([ {max_age_jitter_ms, JitterMS} | Rest ], State)
+  when is_integer(JitterMS), JitterMS > 0 ->
+  parse_options(Rest, State#state{max_age_jitter_ms = JitterMS});
 parse_options ([ {max_connections, MaxConnections} | Rest ], State)
   when is_integer(MaxConnections), MaxConnections > 0; MaxConnections =:= infinity ->
   parse_options(Rest, State#state{max_connections = MaxConnections}).
@@ -377,14 +395,15 @@ open (CallerPid, State) ->
   case State of
     #state{remaining_connections=0} -> {{error, busy}, State#state{unavailable=State#state.unavailable + 1}};
     #state{remaining_connections=Remaining, busy=Busy,
-           host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS,
+           host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS, max_age_jitter_ms=MaxJitterMS,
            monitor_queue=MonitorQueue, connections=Connections}
       when Remaining > 0 ->
       case gen_tcp:connect(Host, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ], ConnectTimeoutMS) of
         Success={ok, Socket} ->
           LifetimeEpochMS = case MaxAgeMS of
                               infinity -> infinity;
-                              _        -> now_ms(os:timestamp()) + MaxAgeMS
+                              _        -> JitterMS = case MaxJitterMS of 0 -> 0; _ -> rand:uniform(MaxJitterMS + 1) - 1 end,
+                                          now_ms(os:timestamp()) + MaxAgeMS + JitterMS
                             end,
           MonitorRef = monitor(process, CallerPid),
           MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_new', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
