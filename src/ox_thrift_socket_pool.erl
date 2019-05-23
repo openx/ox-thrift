@@ -107,6 +107,9 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           remaining_connections = ?INFINITY :: non_neg_integer(),
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
+          close_local = 0 :: non_neg_integer(),
+          close_remote = 0 :: non_neg_integer(),
+          close_die = 0 :: non_neg_integer(),
           error_pool_full = 0 :: non_neg_integer(),
           error_connect = 0 :: non_neg_integer(),
           idle_queue = undefined :: ?QUEUE_TYPE | 'undefined',
@@ -173,6 +176,12 @@ transfer (Id, Socket, NewOwner) ->
 %% @doc Returns stats as a proplist
 %% `idle': the number of idle connections.
 %% `busy': the number of busy connections.
+%% `close_local': the number of times a connection was closed locally
+%%    because the maximum age was reached.
+%% `close_remote': the number of times a connection was closed by the remote
+%%   end or an error occurred.
+%% `close_die': the number of times a connection was closed because the
+%%    process that had it checked out died
 %% `error_pool_full': the number of times the pool failed to provide a
 %%    connection because the `max_connections' limit has been reached.
 %% `error_connect': the number of times the pool failed to provide a
@@ -285,9 +294,12 @@ handle_call ({get_connection, Socket}, _From, State=#state{connections=Connectio
 handle_call (stop, _From, State) ->
   {stop, normal, ok, State};
 %% returns idle/busy/unavailable stats
-handle_call (stats, _From, State=#state{idle=Idle, busy=Busy, error_pool_full=ErrorPoolFull, error_connect=ErrorConnect}) ->
-    {reply, [{idle, Idle},
-             {busy, Busy},
+handle_call (stats, _From, State=#state{error_pool_full=ErrorPoolFull, error_connect=ErrorConnect}) ->
+    {reply, [ {idle, State#state.idle},
+             {busy, State#state.busy},
+             {close_local, State#state.close_local},
+             {close_remote, State#state.close_remote},
+             {close_die, State#state.close_die},
              {error_pool_full, ErrorPoolFull},
              {error_connect_error, ErrorConnect},
              {unavailable, ErrorPoolFull + ErrorConnect}
@@ -338,7 +350,7 @@ handle_info (_DownMsg={'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{m
       _ ->
         %% Close and forget the socket.
         MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_down', MonitorRef, _Pid, Socket, erlang:monotonic_time()}, MonitorQueue),
-        close(Socket, close, State#state{monitor_queue = MonitorQueueOut})
+        close(Socket, close_die, State#state{monitor_queue = MonitorQueueOut})
     end,
   {noreply, StateOut};
 handle_info (_, State) ->
@@ -373,12 +385,13 @@ maybe_put_idle (Socket, Status, CallerPid, State=#state{monitor_queue=MonitorQue
       ConnectionsOut = ?MAPS_UPDATE(Socket, Connection#connection{monitor_ref = undefined, owner = undefined}, Connections),
       StateOut = State#state{monitor_queue = MonitorQueueOut, connections = ConnectionsOut},
 
-      DoClose =
-        Status =/= ok orelse
-        (is_integer(LifetimeEpochMS) andalso now_ms(os:timestamp()) >= LifetimeEpochMS),
-
-      if DoClose -> close(Socket, close, StateOut);
-         true    -> put_idle(Socket, StateOut)
+      if Status =/= ok                  -> close(Socket, close_remote, StateOut);
+         is_integer(LifetimeEpochMS) ->
+          NowMS = now_ms(os:timestamp()),
+          if NowMS >= LifetimeEpochMS   -> close(Socket, close_local, StateOut);
+             true                       -> put_idle(Socket, StateOut)
+          end;
+         true                           -> put_idle(Socket, StateOut)
       end;
     undefined ->
       %% This should never happen.
@@ -421,11 +434,20 @@ open (CallerPid, State) ->
   end.
 
 
--spec close(Socket::inet:socket(), CloseSocket::('close' | 'do_not_close'), State::#state{}) -> #state{}.
+-spec close(Socket::inet:socket(), CloseSocket, State::#state{}) -> #state{} when
+    CloseSocket :: 'close_local' | 'close_remote' | 'close_die' | 'do_not_close'.
 close (Socket, CloseSocket, State=#state{remaining_connections=Remaining, busy=Busy, connections=Connections}) when is_port(Socket) ->
-  CloseSocket =:= close andalso gen_tcp:close(Socket),
+  CloseSocket =/= do_not_close andalso gen_tcp:close(Socket),
   ConnectionsOut = ?MAPS_REMOVE(Socket, Connections),
-  State#state{remaining_connections = Remaining + 1, busy = Busy - 1, connections = ConnectionsOut}.
+  State#state{remaining_connections = Remaining + 1, busy = Busy - 1,
+              close_local = increment_if_match(State#state.close_local, CloseSocket, close_local),
+              close_remote = increment_if_match(State#state.close_remote, CloseSocket, close_remote),
+              close_die = increment_if_match(State#state.close_die, CloseSocket, close_die),
+              connections = ConnectionsOut}.
+
+
+increment_if_match (Value, A, A) -> Value + 1;
+increment_if_match (Value, _, _) -> Value.
 
 
 now_ms ({MegaSec, Sec, MicroSec}) ->
@@ -515,8 +537,10 @@ echo_test () ->
   ?assertEqual(2, Conn1#connection.use_count),
 
   %% This is an 'error' checkin, so the socket is closed.
+  ?assertMatch(#state{close_local = 0, close_remote = 0}, get_state(?TEST_ID)),
   checkin(?TEST_ID, Socket1, close),
   ?assertEqual(undefined, get_connection(?TEST_ID, Socket1)),
+  ?assertMatch(#state{close_local = 0, close_remote = 1}, get_state(?TEST_ID)),
 
   %% Check that checkin validates its arguments.
   ?assertError(function_clause, checkin(?TEST_ID, undefined, ok)),
@@ -537,7 +561,7 @@ timeout_test () ->
 
   %% This checkin happened quickly, so the socket was returned to the pool.
   checkin(?TEST_ID, Socket0, ok),
-  ?assertMatch(#state{idle = 1, busy = 0, remaining_connections = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 1, busy = 0, remaining_connections = 1, close_local = 0}, get_state(?TEST_ID)),
 
   {ok, Socket1} = checkout(?TEST_ID),
   ?assertEqual(Socket0, Socket1),
@@ -549,17 +573,17 @@ timeout_test () ->
   %% This checkin happens after the max age, so the socket is closed.
   checkin(?TEST_ID, Socket1, ok),
   ?assertEqual(undefined, get_connection(?TEST_ID, Socket1)),
-  ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2, close_local = 1}, get_state(?TEST_ID)),
 
   %% This checkout gets a new socket.
   {ok, Socket2} = checkout(?TEST_ID),
-  ?assertMatch(#state{idle = 0, busy = 1, remaining_connections = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 0, busy = 1, remaining_connections = 1, close_local = 1}, get_state(?TEST_ID)),
   Conn2 = get_connection(?TEST_ID, Socket2),
   ?assertEqual(1, Conn2#connection.use_count),
 
   %% This checkin returns the socket to the pool.
   checkin(?TEST_ID, Socket2, ok),
-  ?assertMatch(#state{idle = 1, busy = 0, remaining_connections = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 1, busy = 0, remaining_connections = 1, close_local = 1}, get_state(?TEST_ID)),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
@@ -574,9 +598,9 @@ monitor_test () ->
   ?assertMatch(#state{idle = 0, busy = 0}, get_state(?TEST_ID)),
   spawn(fun () -> checkout(?TEST_ID), timer:sleep(50) end),
   timer:sleep(10),
-  ?assertMatch(#state{idle = 0, busy = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 0, busy = 1, close_die = 0}, get_state(?TEST_ID)),
   timer:sleep(100),
-  ?assertMatch(#state{idle = 0, busy = 0}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 0, busy = 0, close_die = 1}, get_state(?TEST_ID)),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
@@ -605,7 +629,6 @@ monitor_bad_down_test () ->
   %% Send the pool a spurious DOWN message and see what happens.
   ?TEST_ID ! {'DOWN', make_ref(), process, self(), shutdown},
   timer:sleep(10),
-  io:format(user, "stats ~p\n", [ stats(?TEST_ID) ]),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill),
@@ -621,11 +644,10 @@ monitor_bad_checkin_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
 
-  %% Check in a socket that was not checked in and see what happens.
+  %% Check in a socket that was not checked out and see what happens.
   Port = open_port({spawn, <<"cat">>}, []),
   checkin(?TEST_ID, Port, ok),
   timer:sleep(10),
-  io:format(user, "stats ~p\n", [ stats(?TEST_ID) ]),
   port_close(Port),
 
   ok = destroy(?TEST_ID),
