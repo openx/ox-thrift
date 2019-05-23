@@ -107,7 +107,8 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           remaining_connections = ?INFINITY :: non_neg_integer(),
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
-          unavailable = 0 :: non_neg_integer(),
+          error_pool_full = 0 :: non_neg_integer(),
+          error_connect = 0 :: non_neg_integer(),
           idle_queue = undefined :: ?QUEUE_TYPE | 'undefined',
           monitor_queue = undefined :: ?QUEUE_TYPE | 'undefined', %% DEBUG_CONNECTIONS
           connections = undefined :: map_type() | 'undefined'}).
@@ -170,11 +171,12 @@ transfer (Id, Socket, NewOwner) ->
   gen_server:call(Id, {transfer, Socket, NewOwner}).
 
 %% @doc Returns stats as a proplist
-%% `idle` the number of idle connections
-%% `busy` the number of busy connections
-%% `unavailable` the number of time the pool failed to provide a connection
-%%               either because the connection failed or
-%%               `max_connections` limit has been reached
+%% `idle': the number of idle connections.
+%% `busy': the number of busy connections.
+%% `error_pool_full': the number of times the pool failed to provide a
+%%    connection because the `max_connections' limit has been reached.
+%% `error_connect': the number of times the pool failed to provide a
+%%    connection because the socket open failed.
 -spec stats(Id::atom()) -> list({atom(), integer()}).
 stats (Id) ->
   gen_server:call(Id, stats).
@@ -283,10 +285,13 @@ handle_call ({get_connection, Socket}, _From, State=#state{connections=Connectio
 handle_call (stop, _From, State) ->
   {stop, normal, ok, State};
 %% returns idle/busy/unavailable stats
-handle_call (stats, _From, State=#state{idle=Idle, busy=Busy, unavailable=Unavailable}) ->
+handle_call (stats, _From, State=#state{idle=Idle, busy=Busy, error_pool_full=ErrorPoolFull, error_connect=ErrorConnect}) ->
     {reply, [{idle, Idle},
-             {unavailable, Unavailable},
-             {busy, Busy}],
+             {busy, Busy},
+             {error_pool_full, ErrorPoolFull},
+             {error_connect_error, ErrorConnect},
+             {unavailable, ErrorPoolFull + ErrorConnect}
+            ],
             State};
 %% Transfers control of a checked-out socket to a new owner.
 handle_call ({transfer, Socket, NewOwner}, _From, State=#state{monitor_queue=MonitorQueue, connections=Connections}) ->
@@ -393,7 +398,7 @@ put_idle (Socket, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue}) ->
 -spec open(CallerPid::pid(), State::#state{}) -> {({'ok', Socket::inet:socket()} | {'error', Reason::term()}), #state{}}.
 open (CallerPid, State) ->
   case State of
-    #state{remaining_connections=0} -> {{error, busy}, State#state{unavailable=State#state.unavailable + 1}};
+    #state{remaining_connections=0} -> {{error, busy}, State#state{error_pool_full=State#state.error_pool_full + 1}};
     #state{remaining_connections=Remaining, busy=Busy,
            host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS, max_age_jitter_ms=MaxJitterMS,
            monitor_queue=MonitorQueue, connections=Connections}
@@ -411,7 +416,7 @@ open (CallerPid, State) ->
           ConnectionsOut = ?MAPS_PUT(Socket, ConnectionOut, Connections),
           {Success, State#state{remaining_connections = Remaining - 1, busy = Busy + 1, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}};
         Error ->
-          {Error, State#state{unavailable=State#state.unavailable + 1}}
+          {Error, State#state{error_connect = State#state.error_connect + 1}}
       end
   end.
 
@@ -635,21 +640,21 @@ limit_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0, 0 ]) end),
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_connections, 2} ]}),
 
-  ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2, unavailable = 0}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2, error_pool_full = 0}, get_state(?TEST_ID)),
   {ok, Socket0} = checkout(?TEST_ID),
   ?assertNot(is_tuple(Socket0)),
   {ok, Socket1} = checkout(?TEST_ID),
   ?assertNot(is_tuple(Socket1)),
-  ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, unavailable = 0}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, error_pool_full = 0}, get_state(?TEST_ID)),
   ?assertMatch({error, busy}, checkout(?TEST_ID)),
-  ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, unavailable = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, error_pool_full = 1}, get_state(?TEST_ID)),
   checkin(?TEST_ID, Socket0, ok),
   {ok, Socket2} = checkout(?TEST_ID),
   ?assertNot(is_tuple(Socket2)),
-  ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, unavailable = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 0, error_pool_full = 1}, get_state(?TEST_ID)),
   checkin(?TEST_ID, Socket0, ok),
   checkin(?TEST_ID, Socket1, ok),
-  ?assertMatch(#state{idle = 2, busy = 0, remaining_connections = 0, unavailable = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{idle = 2, busy = 0, remaining_connections = 0, error_pool_full = 1}, get_state(?TEST_ID)),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
