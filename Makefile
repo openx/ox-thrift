@@ -1,6 +1,6 @@
 # -*- mode: makefile-gmake -*-
 
-REBAR3=rebar3
+REBAR3=scl enable devtoolset-6 -- rebar3
 # export ERL_COMPILER_OPTIONS=bin_opt_info
 
 all:

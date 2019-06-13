@@ -114,6 +114,11 @@ Thrift client.
   by calling the `ox_thrift_socket_pool:start_link/4` function.
   See [the module](src/ox_thrift_socket_pool.erl) for more documentation.
 
+* `ox_thrift_shackle_client` is an adapter to use OX Thrift with the
+  [Shackle](https://github.com/lpgauth/shackle) socket pool.  See the
+  [thrift_shackle_tests module](test/thrift_shackle_tests.erl) for an example
+  of how to use it.
+
 You can turn on some additional features out in `ox_thrift_socket_pool` by
 adding the following to your `rebar.config` file:
 

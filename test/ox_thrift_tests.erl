@@ -3,10 +3,10 @@
 
 -module(ox_thrift_tests).
 
--include_lib("eunit/include/eunit.hrl").
-
--include("test_types.hrl").
 -include("ox_thrift.hrl").
+-include("test_types.hrl").
+
+-include_lib("eunit/include/eunit.hrl").
 
 -behaviour(ox_thrift_server).
 
