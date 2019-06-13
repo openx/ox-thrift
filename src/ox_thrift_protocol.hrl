@@ -61,9 +61,12 @@ encode_call (ServiceModule, Function, SeqId, Args) ->
 
 
 -spec encode_message(ServiceModule::atom(), Function::atom(), MessageType::message_type(), SeqId::integer(), Args::term()) -> iolist().
-%% `MessageType' is `call', `call_oneway', `reply_normal', 'reply_exception',
-%% or `exception'.  If a normal reply, the `Args' argument is a variable of
-%% the expected return type for `Function'.  If an exception reply, the `Args'
+%% @doc Encodes a thrift message.
+%%
+%% `MessageType' is `call' or `call_oneway' (used by the thrift client) or
+%% `reply_normal', `reply_exception', or `exception' (used by the thrift
+%% server).  If a normal reply, the `Args' argument is a variable of the
+%% expected return type for `Function'.  If an exception reply, the `Args'
 %% argument is an record of one of the declared exception types.
 %%
 %% `Args' is a list of function arguments for a `?tMessageType_CALL', and is
@@ -234,7 +237,9 @@ encode_struct ([], _Record, _I, _LastId, Acc) ->
 
 -spec decode_message(ServiceModule::atom(), codec_config(), Buffer::binary()) ->
                         {Function::atom(), MessageType::message_type(), Seqid::integer(), Args::term()}.
-%% `MessageType' is `?tMessageType_CALL', `?tMessageType_ONEWAY', `?tMessageReply', or `?tMessageException'.
+%% @doc Decodes a thrift message.
+%%
+%% `MessageType' is `call', `call_oneway', `reply_normal', `reply_exception', or `exception'.
 decode_message (ServiceModule, CodecConfig, Buffer0) ->
   {Buffer1, FunctionBin, ThriftMessageType, SeqId} =
     read_message_begin(Buffer0),
