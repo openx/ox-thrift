@@ -19,7 +19,7 @@ the Apache Thrift Erlang library.
 
 * The Thrift server uses the
   [Ranch](https://github.com/ninenines/ranch) acceptor pool instead of
-  rolling its own.
+  rolling its own.  OX Thrift requires ranch version 1.6 or newer.
 
 * The `HandlerModule:handle_function(Function, Args)` interface
   expects the HandlerModule to take its arguments as a list instead of
@@ -145,9 +145,9 @@ application needs to start Ranch, and then to register the
 ```erlang
 ranch:start_listener(
   ?THRIFT_SERVICE_REF,
-  10,                % Number of acceptors.
   ranch_tcp,
-  [ {port, Port} ],  % https://github.com/ninenines/ranch/blob/master/doc/src/manual/ranch_tcp.asciidoc
+  [ {port, Port}  ,  % https://github.com/ninenines/ranch/blob/master/doc/src/manual/ranch_tcp.asciidoc
+    {num_acceptors, 10} ],
   ox_thrift_server,  % Ranch protocol module.
   #ox_thrift_config{
      service_module = service_thrift,
