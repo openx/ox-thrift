@@ -112,6 +112,7 @@ Thrift client.
   shared among multiple processes.  The pool is managed by a
   gen_server which you are expected to link into your supervisor tree
   by calling the `ox_thrift_socket_pool:start_link/4` function.
+  See [the module](src/ox_thrift_socket_pool.erl) for more documentation.
 
 You can turn on some additional features out in `ox_thrift_socket_pool` by
 adding the following to your `rebar.config` file:

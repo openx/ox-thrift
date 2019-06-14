@@ -25,6 +25,8 @@
 -define(M, 1000000).
 -define(K, 1000).
 
+-define(MAX_ASYNC_OPENS_DEFAULT, 10).
+
 %% Macros for logging messages in a standard format.
 -define(THRIFT_LOG_MSG(LogFunc, Format),
         LogFunc("~s:~B - " ++ Format, [ ?MODULE, ?LINE ])).
@@ -96,7 +98,9 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           max_age_ms = infinity :: pos_integer() | 'infinity',
           max_age_jitter_ms :: non_neg_integer() | 'undefined',
           max_connections = infinity :: pos_integer() | 'infinity',
+          max_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
           remaining_connections = ?INFINITY :: non_neg_integer(),
+          remaining_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
           close_local = 0 :: non_neg_integer(),
@@ -135,8 +139,15 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 %% `{max_connections, Count}' specifies the maximum size of the connection
 %% pool.  If Count sockets are already checked out, calls to `checkout' will
 %% fail until until a socket is checked in.
+%%
+%% `{max_async_opens, Count}' limits the number of simultaneous opens the pool
+%% will attempt.  When the limit is reached, the pool will fall back to
+%% opening new connections synchronously.  This is useful to allow a few new
+%% connections to be opened quickly when there is a small burst of requests
+%% but to avoid overloading the remote server by a large burst.  The default
+%% `max_async_opens' is 10, and asynchronous opens may be disabled by setting
+%% `max_async_opens' to 0.
 start_link (Id, Host, Port, Options) ->
-
   State0 = #state{id = Id, host = Host, port = Port},
   State1 = parse_options(Options, State0),
   %% We're using ets:update_counter to maintain max_connections, so translate
@@ -153,6 +164,7 @@ start_link (Id, Host, Port, Options) ->
       #state{max_age_jitter_ms=MAJ}                      -> MAJ
     end,
   State = State1#state{remaining_connections = RemainingConnections,
+                       remaining_async_opens = State1#state.max_async_opens,
                        max_age_jitter_ms = MaxAgeJitterMS},
 
   gen_server:start_link({local, Id}, ?MODULE, State, []).
@@ -221,7 +233,10 @@ parse_options ([ {max_age_jitter_ms, JitterMS} | Rest ], State)
   parse_options(Rest, State#state{max_age_jitter_ms = JitterMS});
 parse_options ([ {max_connections, MaxConnections} | Rest ], State)
   when is_integer(MaxConnections), MaxConnections > 0; MaxConnections =:= infinity ->
-  parse_options(Rest, State#state{max_connections = MaxConnections}).
+  parse_options(Rest, State#state{max_connections = MaxConnections});
+parse_options ([ {max_async_opens, MaxAsyncOpens} | Rest ], State)
+  when is_integer(MaxAsyncOpens), MaxAsyncOpens >= 0 ->
+  parse_options(Rest, State#state{max_async_opens = MaxAsyncOpens}).
 
 
 -spec destroy(Id::atom()) -> 'ok'.
@@ -423,26 +438,52 @@ put_idle (Socket, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue}) ->
 open_start (CallerPid, State) ->
   case State of
     #state{remaining_connections=0} ->
-      {{error, busy}, State#state{error_pool_full=State#state.error_pool_full + 1}};
-    #state{remaining_connections=Remaining, busy=Busy,
+      {{error, busy}, State#state{error_pool_full=State#state.error_pool_full + 1}}; % ERROR RETURN
+    #state{remaining_connections=RemainingConnections, remaining_async_opens=RemainingAsyncOpensIn, busy=Busy,
            host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS, max_age_jitter_ms=MaxJitterMS,
            connections=Connections}
-      when Remaining > 0 ->
-      %% We're going to update our state as if we opened the connection, but
-      %% we're going to leave the actual opening of the connection to the
-      %% client so that we don't block other requests.
+      when RemainingConnections > 0 ->
 
-      LifetimeEpochMS = case MaxAgeMS of
-                          infinity -> infinity;
-                          _        -> JitterMS = case MaxJitterMS of 0 -> 0; _ -> rand:uniform(MaxJitterMS + 1) - 1 end,
-                                      now_ms(os:timestamp()) + MaxAgeMS + JitterMS
-                        end,
-      MonitorRef = monitor(process, CallerPid),
-      ConnectionOut = #connection{socket = MonitorRef, lifetime_epoch_ms = LifetimeEpochMS, monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
-      ConnectionsOut = ?MAPS_PUT(MonitorRef, ConnectionOut, Connections),
-      Reply = #open_start{reference = MonitorRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()},
-      {Reply, State#state{remaining_connections = Remaining - 1, busy = Busy + 1, connections = ConnectionsOut}}
+      case
+        RemainingAsyncOpensIn =:= 0 andalso
+        gen_tcp:connect(Host, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ], ConnectTimeoutMS)
+      of
+        Error={error, _} ->
+          %% We attempted to open the connection locally but it failed.
+          {Error, State#state{error_connect = State#state.error_connect + 1}}; % ERROR RETURN
+        SuccessOrFalse ->
+          %% Either the socket has been successfully opened locally or it will
+          %% be opened in the client.
+          MonitorRef = monitor(process, CallerPid),
+          case SuccessOrFalse of
+            Success={ok, Socket} ->
+              %% The socket was successfuly opened locally.
+              Reply = Success,
+              SocketOrMonitorRef = Socket,
+              RemainingAsyncOpensOut = RemainingAsyncOpensIn;
+            false ->
+              %% Update our state as if the connection was opened, but leave
+              %% the actual opening of the connection to the client so that it
+              %% doesn't block other requests.  Once the client has opened the
+              %% socket open_complete will be called to finalize the state.
+              Reply = #open_start{reference = MonitorRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()},
+              SocketOrMonitorRef = MonitorRef,
+              RemainingAsyncOpensOut = RemainingAsyncOpensIn - 1
+            end,
+          LifetimeEpochMS = case MaxAgeMS of
+                              infinity -> infinity;
+                              _        -> JitterMS = case MaxJitterMS of 0 -> 0; _ -> rand:uniform(MaxJitterMS + 1) - 1 end,
+                                          now_ms(os:timestamp()) + MaxAgeMS + JitterMS
+                            end,
+          ConnectionOut = #connection{socket = SocketOrMonitorRef, lifetime_epoch_ms = LifetimeEpochMS,
+                                      monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
+          ConnectionsOut = ?MAPS_PUT(SocketOrMonitorRef, ConnectionOut, Connections),
+          {Reply, State#state{remaining_connections = RemainingConnections - 1, % SUCCESS RETURN
+                              remaining_async_opens = RemainingAsyncOpensOut,
+                              busy = Busy + 1, connections = ConnectionsOut}}
+      end
   end.
+
 
 -spec open_complete(#open_complete{}, #state{}) -> #state{}.
 open_complete (#open_complete{reference=Ref, socket=Socket}, State=#state{connections=Connections}) ->
@@ -497,7 +538,10 @@ parse_options_test () ->
                parse_options([], BaseState)),
   ?assertMatch(#state{connect_timeout_ms = 42}, parse_options([ {connect_timeout_ms, 42} ], BaseState)),
   ?assertMatch(#state{max_age_ms = 117000}, parse_options([ {max_age_seconds, 117} ], BaseState)),
-  ?assertMatch(#state{max_connections = 10}, parse_options([ {max_connections, 10} ], BaseState)).
+  ?assertMatch(#state{max_connections = 10}, parse_options([ {max_connections, 10} ], BaseState)),
+  ?assertMatch(#state{max_connections = infinity}, parse_options([ {max_connections, infinity} ], BaseState)),
+  ?assertMatch(#state{max_async_opens = 10}, parse_options([ {max_async_opens, 10} ], BaseState)),
+  ok.
 
 now_ms_test () ->
   ?assertEqual(1002003004, now_ms({1, 002003, 004005})).
@@ -553,6 +597,7 @@ echo_test () ->
   %% This is an 'ok' checkin, so the socket goes back into the pool.
   checkin(?TEST_ID, Socket0, ok),
   Conn0 = get_connection(?TEST_ID, Socket0),
+  ?assertMatch(#connection{}, Conn0),
   ?assertEqual(1, Conn0#connection.use_count),
 
   %% This checkout should return the socket from the pool.
