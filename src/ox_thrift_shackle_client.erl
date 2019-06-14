@@ -28,7 +28,9 @@ setup (_Socket, State) ->
   {ok, State}.
 
 handle_request ({Function, Args}, State=#state{service_module=Service, protocol_module=Protocol, seqid=SeqId}) ->
-  {CallType, RequestData} = Protocol:encode_call(Service, Function, SeqId, Args),
+  %% ox_thrift_shackle_client does not currently handle oneway_void thrift
+  %% functions because the thrift server does not return any response.
+  {call, RequestData} = Protocol:encode_call(Service, Function, SeqId, Args),
   Length = iolist_size(RequestData),
   {ok, SeqId, [ <<Length:32/big-signed>>, RequestData ], State#state{seqid = SeqId + 1}}.
 
