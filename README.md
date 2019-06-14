@@ -341,6 +341,9 @@ See the [message protocol documentation](MessageProtocol.md).
 * Erik van Oosten's
   [Thrift Specification -- Remote Procedure Call](https://erikvanoosten.github.io/thrift-missing-specification/)
   (a.k.a, "Thrift: The Missing Specification").
+  (See [my
+  fork](https://github.com/dhull/thrift-missing-specification/tree/correct-double-endianness-compact-protocol)
+  for some corrections that haven't yet been merged as of this writing.)
 
 * Andrew Prunicki's "Apache Thrift" overview has a [comparison of Thrift with
   other protocols](http://jnb.ociweb.com/jnb/jnbJun2009.html#compare) that
