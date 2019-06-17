@@ -310,10 +310,14 @@ init (State=#state{}) ->
 
 %% @hidden
 handle_call (checkout, {CallerPid, _Tag}, State=#state{idle_queue=IdleQueue}) ->
-  {Reply, StateOut} =
+  {IdleConnectionAvailable, State1} =
     case queue:is_empty(IdleQueue) of
-      false -> get_idle(CallerPid, State);
-      true  -> open_start(CallerPid, State)
+      false -> {true, State};
+      true  -> handle_pending_checkin(State)
+    end,
+  {Reply, StateOut} =
+    if IdleConnectionAvailable -> get_idle(CallerPid, State1);
+       true                    -> open_start(CallerPid, State1)
     end,
   {reply, Reply, StateOut};
 handle_call (get_state, _From, State) ->
@@ -396,6 +400,26 @@ code_change (_OldVsn, State, _Extra) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+handle_pending_checkin (State) ->
+  %% This function is called when a checkout request is received but there are
+  %% no connections in the idle quue.  It does a selective receive on the
+  %% message queue to check for a pending checking request, and if one is
+  %% found the checkin is handled immediatly to make the connection available
+  %% to the checkout request.  It returns true if a checkin message was found.
+  receive
+    {'$gen_cast', CheckinMsg={checkin, _, _, _}} ->
+      {noreply, StateOut} = handle_cast(CheckinMsg, State),
+      %% If the socket being checked in was old it might have been closed
+      %% instead of put on the idle queue, so check the idle queue again and
+      %% recurse if it's still empty.
+      case queue:is_empty(StateOut#state.idle_queue) of
+        true  -> handle_pending_checkin(StateOut);
+        false -> {true, StateOut}
+      end
+  after 0     -> {false, State}
+  end.
+
 
 get_idle (CallerPid, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue, connections=Connections}) ->
   {{value, Socket}, IdleQueueOut} = queue:out(IdleQueue),
