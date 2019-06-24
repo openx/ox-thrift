@@ -103,6 +103,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           remaining_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
+          checkout = 0 :: non_neg_integer(),
           close_local = 0 :: non_neg_integer(),
           close_remote = 0 :: non_neg_integer(),
           close_die = 0 :: non_neg_integer(),
@@ -179,10 +180,12 @@ transfer (Id, Socket, NewOwner) ->
 %% @doc Returns stats as a proplist
 %% `idle': the number of idle connections.
 %% `busy': the number of busy connections.
+%% `checkout': the number of checkout calls.
+%% `open': the number of new connections opened.
 %% `close_local': the number of times a connection was closed locally
 %%    because the maximum age was reached.
 %% `close_remote': the number of times a connection was closed by the remote
-%%   end or an error occurred.
+%%   end or a communication error occurred.
 %% `close_die': the number of times a connection was closed because the
 %%    process that had it checked out died
 %% `error_pool_full': the number of times the pool failed to provide a
@@ -330,13 +333,17 @@ handle_call (stop, _From, State) ->
 %% returns idle/busy/unavailable stats
 handle_call (stats, _From, State=#state{error_pool_full=ErrorPoolFull, error_connect=ErrorConnect}) ->
     {reply, [ {idle, State#state.idle},
-             {busy, State#state.busy},
-             {close_local, State#state.close_local},
-             {close_remote, State#state.close_remote},
-             {close_die, State#state.close_die},
-             {error_pool_full, ErrorPoolFull},
-             {error_connect_error, ErrorConnect},
-             {unavailable, ErrorPoolFull + ErrorConnect}
+              {busy, State#state.busy},
+              {checkout, State#state.checkout},
+              {open, State#state.idle + State#state.busy +
+                 State#state.close_local + State#state.close_remote + State#state.close_die +
+                 State#state.error_connect},
+              {close_local, State#state.close_local},
+              {close_remote, State#state.close_remote},
+              {close_die, State#state.close_die},
+              {error_pool_full, ErrorPoolFull},
+              {error_connect_error, ErrorConnect},
+              {unavailable, ErrorPoolFull + ErrorConnect}
             ],
             State};
 %% Transfers control of a checked-out socket to a new owner.
@@ -427,7 +434,8 @@ get_idle (CallerPid, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue, co
   Connection=#connection{use_count=UseCount} = ?MAPS_GET(Socket, Connections),
   ConnectionOut = Connection#connection{monitor_ref = MonitorRef, owner = CallerPid, use_count = UseCount + 1},
   ConnectionsOut = ?MAPS_UPDATE(Socket, ConnectionOut, Connections),
-  {{ok, Socket}, State#state{idle = Idle - 1, busy = Busy + 1, idle_queue = IdleQueueOut, connections = ConnectionsOut}}.
+  {{ok, Socket}, State#state{idle = Idle - 1, busy = Busy + 1, checkout = State#state.checkout + 1,
+                             idle_queue = IdleQueueOut, connections = ConnectionsOut}}.
 
 
 maybe_put_idle (Socket, Status, CallerPid, State=#state{connections=Connections}) ->
@@ -462,7 +470,7 @@ put_idle (Socket, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue}) ->
 open_start (CallerPid, State) ->
   case State of
     #state{remaining_connections=0} ->
-      {{error, busy}, State#state{error_pool_full=State#state.error_pool_full + 1}}; % ERROR RETURN
+      {{error, busy}, State#state{checkout = State#state.checkout + 1, error_pool_full=State#state.error_pool_full + 1}}; % ERROR RETURN
     #state{remaining_connections=RemainingConnections, remaining_async_opens=RemainingAsyncOpensIn, busy=Busy,
            host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS, max_age_jitter_ms=MaxJitterMS,
            connections=Connections}
@@ -474,7 +482,7 @@ open_start (CallerPid, State) ->
       of
         Error={error, _} ->
           %% We attempted to open the connection locally but it failed.
-          {Error, State#state{error_connect = State#state.error_connect + 1}}; % ERROR RETURN
+          {Error, State#state{checkout = State#state.checkout + 1, error_connect = State#state.error_connect + 1}}; % ERROR RETURN
         SuccessOrFalse ->
           %% Either the socket has been successfully opened locally or it will
           %% be opened in the client.
@@ -502,7 +510,8 @@ open_start (CallerPid, State) ->
           ConnectionOut = #connection{socket = SocketOrMonitorRef, lifetime_epoch_ms = LifetimeEpochMS,
                                       monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
           ConnectionsOut = ?MAPS_PUT(SocketOrMonitorRef, ConnectionOut, Connections),
-          {Reply, State#state{remaining_connections = RemainingConnections - 1, % SUCCESS RETURN
+          {Reply, State#state{checkout = State#state.checkout + 1, % SUCCESS RETURN
+                              remaining_connections = RemainingConnections - 1,
                               remaining_async_opens = RemainingAsyncOpensOut,
                               busy = Busy + 1, connections = ConnectionsOut}}
       end
@@ -642,6 +651,15 @@ echo_test () ->
 
   %% Check that checkin validates its arguments.
   ?assertError(function_clause, checkin(?TEST_ID, undefined, ok)),
+
+  Stats = stats(?TEST_ID),
+  ?assertMatch({_, 0}, lists:keyfind(idle, 1, Stats)),
+  ?assertMatch({_, 0}, lists:keyfind(busy, 1, Stats)),
+  ?assertMatch({_, 2}, lists:keyfind(checkout, 1, Stats)),
+  ?assertMatch({_, 1}, lists:keyfind(open, 1, Stats)),
+  ?assertMatch({_, 0}, lists:keyfind(close_local, 1, Stats)),
+  ?assertMatch({_, 1}, lists:keyfind(close_remote, 1, Stats)),
+  ?assertMatch({_, 0}, lists:keyfind(close_die, 1, Stats)),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
