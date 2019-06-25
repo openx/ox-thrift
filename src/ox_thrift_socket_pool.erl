@@ -16,7 +16,9 @@
 -behaviour(gen_server).
 -behaviour(ox_thrift_connection).
 
--export([ start_link/4, transfer/3, stats/1 ]).         % API.
+-export([ start_link/4, transfer/3, stats/1             % API.
+        , print_stats/3, print_stats/2, print_stats/1
+        ]).
 -export([ new/1, destroy/1, checkout/1, checkin/3 ]).   % ox_thrift_connection callbacks.
 -export([ init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3 ]). % gen_server callbacks.
 -export([ get_state/1, get_connection/2 ]).             % Debugging.
@@ -195,6 +197,18 @@ transfer (Id, Socket, NewOwner) ->
 stats (Id) ->
   gen_server:call(Id, stats).
 
+print_stats (Id, DelaySec, Count)
+  when is_integer(DelaySec) andalso DelaySec >= 1 andalso
+       ((is_integer(Count) andalso Count >= 1) orelse Count =:= infinity) ->
+  print_stats_internal(Id, erlang:monotonic_time(),
+                       erlang:convert_time_unit(DelaySec, second, native),
+                       subtract_one(Count)).
+
+print_stats (Id, DelaySec) -> print_stats(Id, DelaySec, infinity).
+
+print_stats (Id) -> print_stats(Id, 1, infinity).
+
+
 -record(connection, {
           socket = error({required, socket}) :: inet:socket() | reference(),
           lifetime_epoch_ms = error({required, lifetime_epoch_ms}) :: non_neg_integer() | 'infinity',
@@ -331,7 +345,8 @@ handle_call (stop, _From, State) ->
   {stop, normal, ok, State};
 %% returns idle/busy/unavailable stats
 handle_call (stats, _From, State=#state{error_pool_full=ErrorPoolFull, error_connect=ErrorConnect}) ->
-    {reply, [ {idle, State#state.idle},
+    {reply, [ {epoch_us, erlang:convert_time_unit(erlang:system_time(), native, microsecond)},
+              {idle, State#state.idle},
               {busy, State#state.busy},
               {checkout, State#state.checkout},
               {open, State#state.idle + State#state.busy +
@@ -568,6 +583,30 @@ now_ms ({MegaSec, Sec, MicroSec}) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-define(EPOCH_BASE, 62167219200). %% calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
+
+format_epoch (Epoch) ->
+  {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:gregorian_seconds_to_datetime(Epoch + ?EPOCH_BASE),
+  io_lib:format("~4B-~2.10.0B-~2.10.0B ~2.10.0B:~2.10.0B:~2.10.0B", [ Year, Month, Day, Hour, Minute, Second ]).
+
+subtract_one (I) when is_integer(I) -> I - 1;
+subtract_one (infinity)             -> infinity.
+
+print_stats_internal (Id, LastTS, DelayTime, Repeat) ->
+  Stats = stats(Id),
+  {_, EpochUS} = lists:keyfind(epoch_us, 1, Stats),
+  io:format("~s\n  ~p\n", [ format_epoch(EpochUS div 1000000), Stats ]),
+  if Repeat =:= 0 -> ok;
+     true ->
+      NextTS = LastTS + DelayTime,
+      SleepMS = erlang:convert_time_unit(NextTS - erlang:monotonic_time(), native, millisecond),
+      timer:sleep(SleepMS),
+      print_stats_internal(Id, NextTS, DelayTime, subtract_one(Repeat))
+  end.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
@@ -669,6 +708,8 @@ echo_test () ->
   ?assertMatch({_, 0}, lists:keyfind(close_local, 1, Stats)),
   ?assertMatch({_, 1}, lists:keyfind(close_remote, 1, Stats)),
   ?assertMatch({_, 0}, lists:keyfind(close_die, 1, Stats)),
+
+  print_stats(?TEST_ID, 1, 2),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
