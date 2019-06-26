@@ -55,17 +55,9 @@
 
 %% Macros which provide an identical interface to maps and dicts.
 
--ifdef(NAMESPACED_TYPES).
--define(DICT_TYPE, dict:dict()).
--define(QUEUE_TYPE, queue:queue()).
--else.
--define(DICT_TYPE, dict()).
--define(QUEUE_TYPE, queue()).
--endif.
-
 -ifdef(OXTHRIFT_NO_MAPS).
 
--type map_type() :: ?DICT_TYPE.
+-type map_type() :: dict:dict().
 -define(MAPS_NEW(), dict:new()).
 -define(MAPS_GET(Key, Dict), dict:fetch(Key, Dict)).
 -define(MAPS_GET(Key, Dict, Default), dict_get(Key, Dict, Default)).
@@ -109,7 +101,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           close_die = 0 :: non_neg_integer(),
           error_pool_full = 0 :: non_neg_integer(),
           error_connect = 0 :: non_neg_integer(),
-          idle_queue = undefined :: ?QUEUE_TYPE | 'undefined',
+          idle_queue = undefined :: queue:queue() | 'undefined',
           connections = undefined :: map_type() | 'undefined'}).
 
 
