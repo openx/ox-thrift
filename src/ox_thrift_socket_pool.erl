@@ -32,15 +32,21 @@
         LogFunc("~s:~B - " ++ Format, [ ?MODULE, ?LINE ])).
 -define(THRIFT_LOG_MSG(LogFunc, Format, Args),
         LogFunc("~s:~B - " ++ Format, [ ?MODULE, ?LINE | Args ])).
--ifdef(DEBUG_CONNECTIONS).
 -define(THRIFT_ERROR_MSG(Format),
         ?THRIFT_LOG_MSG(error_logger:error_msg, Format)).
 -define(THRIFT_ERROR_MSG(Format, Args),
         ?THRIFT_LOG_MSG(error_logger:error_msg, Format, Args)).
+
+-ifdef(DEBUG_CONNECTIONS).
+-define(MONITOR_QUEUE_SIZE, 200).
+monitor_queue_new () -> queue:from_list(lists:duplicate(?MONITOR_QUEUE_SIZE, undefined)).
+-define(MONITOR_QUEUE_ADD(Item, Queue), queue:in(Item, queue:drop(Queue))).
 -else. %% ! DEBUG_CONNECTIONS
--define(THRIFT_ERROR_MSG(Format), ok).
--define(THRIFT_ERROR_MSG(Format, Args), ok).
+monitor_queue_new () -> undefined.
+-define(MONITOR_QUEUE_ADD(Item, Queue), Queue).
 -endif. %% ! DEBUG_CONNECTIONS
+monitor_queue_to_list (undefined) -> [];
+monitor_queue_to_list (Queue)     -> queue:to_list(Queue).
 
 
 -ifdef(MONDEMAND_PROGID).
@@ -102,6 +108,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           error_pool_full = 0 :: non_neg_integer(),
           error_connect = 0 :: non_neg_integer(),
           idle_queue = undefined :: queue:queue() | 'undefined',
+          monitor_queue = undefined :: queue:queue() | 'undefined', %% DEBUG_CONNECTIONS
           connections = undefined :: map_type() | 'undefined'}).
 
 
@@ -301,7 +308,7 @@ get_connection (Id, Socket) ->
 
 %% @hidden
 init (State=#state{}) ->
-  {ok, State#state{idle_queue = queue:new(), connections = ?MAPS_NEW()}}.
+  {ok, State#state{idle_queue = queue:new(), monitor_queue = monitor_queue_new(), connections = ?MAPS_NEW()}}.
 
 %% @hidden
 handle_call (checkout, {CallerPid, _Tag}, State=#state{idle_queue=IdleQueue}) ->
@@ -316,7 +323,7 @@ handle_call (checkout, {CallerPid, _Tag}, State=#state{idle_queue=IdleQueue}) ->
     end,
   {reply, Reply, StateOut};
 handle_call (get_state, _From, State) ->
-  {reply, State#state{idle_queue = undefined, connections = undefined}, State};
+  {reply, State#state{idle_queue = undefined, monitor_queue = undefined, connections = undefined}, State};
 handle_call ({get_connection, Socket}, _From, State=#state{connections=Connections}) ->
   Connection = ?MAPS_GET(Socket, Connections, undefined),
   {reply, Connection, State};
@@ -339,13 +346,14 @@ handle_call (stats, _From, State=#state{error_pool_full=ErrorPoolFull, error_con
             ],
             State};
 %% Transfers control of a checked-out socket to a new owner.
-handle_call ({transfer, Socket, NewOwner}, _From, State=#state{connections=Connections}) ->
+handle_call ({transfer, Socket, NewOwner}, _From, State=#state{monitor_queue=MonitorQueue, connections=Connections}) ->
   %% Stop monitoring the process that checked the socket out, so we won't
   %% close the socket if that process dies.
   #connection{monitor_ref=MonitorRef} = ?MAPS_GET(Socket, Connections),
   demonitor(MonitorRef, [ flush ]),
+  MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_transfer', MonitorRef, _From, Socket, erlang:monotonic_time()}, MonitorQueue),
   %% Stop considering the socket in the pool's accounting.
-  StateOut = close(Socket, do_not_close, State),
+  StateOut = close(Socket, do_not_close, State#state{monitor_queue = MonitorQueueOut}),
   %% Make NewOwner be the socket's controlling process.
   Reply = gen_tcp:controlling_process(Socket, NewOwner),
   {reply, Reply, StateOut};
@@ -364,7 +372,7 @@ handle_cast (_, State) ->
   {noreply, State}.
 
 %% @hidden
-handle_info (_DownMsg={'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{connections=Connections}) ->
+handle_info (_DownMsg={'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{monitor_queue=MonitorQueue, connections=Connections}) ->
   %% A process that had checked out a socket died.  Update the connection
   %% accounting so that we do not leak connections.
 
@@ -378,12 +386,15 @@ handle_info (_DownMsg={'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{c
     case Socket of
       not_found ->
         %% This should never happen.
-        ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n", [ _DownMsg, State ]),
+        MonitorQueueOut = ?MONITOR_QUEUE_ADD({'down_missing', MonitorRef, _Pid, Socket, erlang:monotonic_time()}, MonitorQueue),
+        ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n  ~p\n",
+                          [ _DownMsg, State#state{monitor_queue = undefined}, monitor_queue_to_list(MonitorQueueOut) ]),
         ?MONDEMAND_INCREMENT(socket_not_found),
-        State;
+        State#state{monitor_queue = MonitorQueueOut};
       _ ->
         %% Close and forget the socket.
-        close(Socket, close_die, State)
+        MonitorQueueOut = ?MONITOR_QUEUE_ADD({'down_close', MonitorRef, _Pid, Socket, erlang:monotonic_time()}, MonitorQueue),
+        close(Socket, close_die, State#state{monitor_queue = MonitorQueueOut})
     end,
   {noreply, StateOut};
 handle_info (_, State) ->
@@ -420,22 +431,24 @@ handle_pending_checkin (State) ->
   end.
 
 
-get_idle (CallerPid, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue, connections=Connections}) ->
+get_idle (CallerPid, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue, monitor_queue=MonitorQueue, connections=Connections}) ->
   {{value, Socket}, IdleQueueOut} = queue:out(IdleQueue),
   MonitorRef = monitor(process, CallerPid),
+  MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_idle', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
   Connection=#connection{use_count=UseCount} = ?MAPS_GET(Socket, Connections),
   ConnectionOut = Connection#connection{monitor_ref = MonitorRef, owner = CallerPid, use_count = UseCount + 1},
   ConnectionsOut = ?MAPS_UPDATE(Socket, ConnectionOut, Connections),
   {{ok, Socket}, State#state{idle = Idle - 1, busy = Busy + 1, checkout = State#state.checkout + 1,
-                             idle_queue = IdleQueueOut, connections = ConnectionsOut}}.
+                             idle_queue = IdleQueueOut, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}}.
 
 
-maybe_put_idle (Socket, Status, CallerPid, State=#state{connections=Connections}) ->
+maybe_put_idle (Socket, Status, CallerPid, State=#state{monitor_queue=MonitorQueue, connections=Connections}) ->
   case ?MAPS_GET(Socket, Connections, undefined) of
     Connection=#connection{lifetime_epoch_ms=LifetimeEpochMS, monitor_ref=MonitorRef, owner=CallerPid} ->
       demonitor(MonitorRef, [ flush ]),
+      MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_checkin', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
       ConnectionsOut = ?MAPS_UPDATE(Socket, Connection#connection{monitor_ref = undefined, owner = undefined}, Connections),
-      StateOut = State#state{connections = ConnectionsOut},
+      StateOut = State#state{monitor_queue = MonitorQueueOut, connections = ConnectionsOut},
 
       if Status =/= ok                  -> close(Socket, close_remote, StateOut);
          is_integer(LifetimeEpochMS) ->
@@ -447,9 +460,11 @@ maybe_put_idle (Socket, Status, CallerPid, State=#state{connections=Connections}
       end;
     undefined ->
       %% This should never happen.
-      ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n\n", [ State ]),
+      MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_checkin_missing', undefined, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
+      ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n",
+                        [ State#state{monitor_queue = undefined}, monitor_queue_to_list(MonitorQueueOut) ]),
       ?MONDEMAND_INCREMENT(socket_not_found),
-      State
+      State#state{monitor_queue = MonitorQueueOut}
   end.
 
 
@@ -465,7 +480,7 @@ open_start (CallerPid, State) ->
       {{error, busy}, State#state{checkout = State#state.checkout + 1, error_pool_full=State#state.error_pool_full + 1}}; % ERROR RETURN
     #state{remaining_connections=RemainingConnections, remaining_async_opens=RemainingAsyncOpensIn, busy=Busy,
            host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS, max_age_jitter_ms=MaxJitterMS,
-           connections=Connections}
+           monitor_queue=MonitorQueue, connections=Connections}
       when RemainingConnections > 0 ->
 
       case
@@ -484,6 +499,7 @@ open_start (CallerPid, State) ->
               %% The socket was successfuly opened locally.
               Reply = Success,
               SocketOrMonitorRef = Socket,
+              MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_server', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
               RemainingAsyncOpensOut = RemainingAsyncOpensIn;
             false ->
               %% Update our state as if the connection was opened, but leave
@@ -492,6 +508,7 @@ open_start (CallerPid, State) ->
               %% socket open_complete will be called to finalize the state.
               Reply = #open_start{reference = MonitorRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()},
               SocketOrMonitorRef = MonitorRef,
+              MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_client', MonitorRef, CallerPid, client_open, erlang:monotonic_time()}, MonitorQueue),
               RemainingAsyncOpensOut = RemainingAsyncOpensIn - 1
             end,
           LifetimeEpochMS = case MaxAgeMS of
@@ -505,7 +522,7 @@ open_start (CallerPid, State) ->
           {Reply, State#state{checkout = State#state.checkout + 1, % SUCCESS RETURN
                               remaining_connections = RemainingConnections - 1,
                               remaining_async_opens = RemainingAsyncOpensOut,
-                              busy = Busy + 1, connections = ConnectionsOut}}
+                              busy = Busy + 1, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}}
       end
   end.
 
