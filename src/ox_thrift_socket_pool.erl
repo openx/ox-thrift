@@ -109,6 +109,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           close_die = 0 :: non_neg_integer(),
           error_pool_full = 0 :: non_neg_integer(),
           error_connect = 0 :: non_neg_integer(),
+          error_socket_not_found = 0 :: non_neg_integer(),
           idle_queue = undefined :: queue:queue() | 'undefined',
           monitor_queue = undefined :: queue:queue() | 'undefined', %% DEBUG_CONNECTIONS
           connections = undefined :: map_type() | 'undefined'}).
@@ -357,6 +358,7 @@ handle_call (stats, _From, State=#state{error_pool_full=ErrorPoolFull, error_con
               {close_die, State#state.close_die},
               {error_pool_full, ErrorPoolFull},
               {error_connect_error, ErrorConnect},
+              {error_socket_not_found, State#state.error_socket_not_found},
               {unavailable, ErrorPoolFull + ErrorConnect}
             ],
             State};
@@ -405,7 +407,8 @@ handle_info (_DownMsg={'DOWN', MonitorRef, process, _Pid, _Info}, State=#state{m
         ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n  ~p\n",
                           [ _DownMsg, State#state{monitor_queue = undefined}, monitor_queue_to_list(MonitorQueueOut) ]),
         ?MONDEMAND_INCREMENT(socket_not_found),
-        State#state{monitor_queue = MonitorQueueOut};
+        State#state{error_socket_not_found = State#state.error_socket_not_found + 1,
+                    monitor_queue = MonitorQueueOut};
       _ ->
         %% Close and forget the socket.
         MonitorQueueOut = ?MONITOR_QUEUE_ADD({'down_close', MonitorRef, _Pid, Socket, erlang:monotonic_time()}, MonitorQueue),
@@ -479,7 +482,8 @@ maybe_put_idle (Socket, Status, CallerPid, State=#state{monitor_queue=MonitorQue
       ?THRIFT_ERROR_MSG("Socket not found\n  ~p\n  ~p\n",
                         [ State#state{monitor_queue = undefined}, monitor_queue_to_list(MonitorQueueOut) ]),
       ?MONDEMAND_INCREMENT(socket_not_found),
-      State#state{monitor_queue = MonitorQueueOut}
+      State#state{error_socket_not_found = State#state.error_socket_not_found + 1,
+                  monitor_queue = MonitorQueueOut}
   end.
 
 
@@ -796,6 +800,9 @@ monitor_bad_down_test () ->
   ?TEST_ID ! {'DOWN', make_ref(), process, self(), shutdown},
   timer:sleep(10),
 
+  Stats = stats(?TEST_ID),
+  ?assertMatch({_, 1}, lists:keyfind(error_socket_not_found, 1, Stats)),
+
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill),
 
@@ -815,6 +822,9 @@ monitor_bad_checkin_test () ->
   checkin(?TEST_ID, Port, ok),
   timer:sleep(10),
   port_close(Port),
+
+  Stats = stats(?TEST_ID),
+  ?assertMatch({_, 1}, lists:keyfind(error_socket_not_found, 1, Stats)),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill),
