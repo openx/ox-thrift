@@ -101,6 +101,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           max_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
           remaining_connections = ?INFINITY :: non_neg_integer(),
           remaining_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
+          last_lifetime_epoch_ms = 0 :: integer(),
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
           checkout = 0 :: non_neg_integer(),
@@ -153,20 +154,13 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 start_link (Id, Host, Port, Options) ->
   State0 = #state{id = Id, host = Host, port = Port},
   State1 = parse_options(Options, State0),
-  %% We're using ets:update_counter to maintain max_connections, so translate
-  %% 'infinity' to a large number.
-  RemainingConnections =
-    case State1#state.max_connections of
-      infinity       -> ?INFINITY;
-      MaxConnections -> MaxConnections
-    end,
   MaxAgeJitterMS =
     case State1 of
       #state{max_age_ms=infinity}                        -> undefined;
       #state{max_age_ms=MA, max_age_jitter_ms=undefined} -> round(MA * 0.20);
       #state{max_age_jitter_ms=MAJ}                      -> MAJ
     end,
-  State = State1#state{remaining_connections = RemainingConnections,
+  State = State1#state{remaining_connections = remaining_connections(State1#state.max_connections),
                        remaining_async_opens = State1#state.max_async_opens,
                        max_age_jitter_ms = MaxAgeJitterMS},
 
@@ -474,7 +468,7 @@ open_start (CallerPid, State) ->
     #state{remaining_connections=0} ->
       {{error, busy}, State#state{checkout = State#state.checkout + 1, error_pool_full=State#state.error_pool_full + 1}}; % ERROR RETURN
     #state{remaining_connections=RemainingConnections, remaining_async_opens=RemainingAsyncOpensIn, busy=Busy,
-           host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS, max_age_jitter_ms=MaxJitterMS,
+           host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS,
            monitor_queue=MonitorQueue, connections=Connections}
       when RemainingConnections > 0 ->
 
@@ -506,17 +500,20 @@ open_start (CallerPid, State) ->
               MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_client', MonitorRef, CallerPid, client_open, erlang:monotonic_time()}, MonitorQueue),
               RemainingAsyncOpensOut = RemainingAsyncOpensIn - 1
             end,
-          LifetimeEpochMS = case MaxAgeMS of
-                              infinity -> infinity;
-                              _        -> JitterMS = case MaxJitterMS of 0 -> 0; _ -> rand:uniform(MaxJitterMS + 1) - 1 end,
-                                          now_ms(os:timestamp()) + MaxAgeMS + JitterMS
-                            end,
+          LifetimeEpochMS =
+            case MaxAgeMS of
+              infinity -> infinity;
+              _        -> MaxConnections = remaining_connections(State#state.max_connections),
+                          max(now_ms(os:timestamp()) + MaxAgeMS,
+                              State#state.last_lifetime_epoch_ms + (MaxAgeMS div MaxConnections))
+            end,
           ConnectionOut = #connection{socket = SocketOrMonitorRef, lifetime_epoch_ms = LifetimeEpochMS,
                                       monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
           ConnectionsOut = ?MAPS_PUT(SocketOrMonitorRef, ConnectionOut, Connections),
           {Reply, State#state{checkout = State#state.checkout + 1, % SUCCESS RETURN
                               remaining_connections = RemainingConnections - 1,
                               remaining_async_opens = RemainingAsyncOpensOut,
+                              last_lifetime_epoch_ms = LifetimeEpochMS,
                               busy = Busy + 1, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}}
       end
   end.
@@ -559,6 +556,12 @@ increment_if_match (Value, _, _) -> Value.
 
 now_ms ({MegaSec, Sec, MicroSec}) ->
   (MegaSec * ?M + Sec) * ?K + MicroSec div ?K.
+
+
+%% We're using ets:update_counter to maintain max_connections, so translate
+%% 'infinity' to a large number.
+remaining_connections (infinity)       -> ?INFINITY;
+remaining_connections (MaxConnections) -> MaxConnections.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
