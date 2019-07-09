@@ -163,7 +163,7 @@ start_link (Id, Host, Port, Options) ->
   MaxAgeJitterMS =
     case State1 of
       #state{max_age_ms=infinity}                        -> undefined;
-      #state{max_age_ms=MA, max_age_jitter_ms=undefined} -> round(MA * 0.10);
+      #state{max_age_ms=MA, max_age_jitter_ms=undefined} -> round(MA * 0.20);
       #state{max_age_jitter_ms=MAJ}                      -> MAJ
     end,
   State = State1#state{remaining_connections = RemainingConnections,
