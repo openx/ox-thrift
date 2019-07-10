@@ -1,4 +1,4 @@
-%% Copyright 2016-2018, OpenX.  All rights reserved.
+%% Copyright 2016-2019, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
 %% @doc A connection pool for ox-thrift.
@@ -96,7 +96,6 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           port = error({required, port}) :: inet:port_number(),
           connect_timeout_ms = infinity :: pos_integer() | 'infinity',
           max_age_ms = infinity :: pos_integer() | 'infinity',
-          max_age_jitter_ms :: non_neg_integer() | 'undefined',
           max_connections = infinity :: pos_integer() | 'infinity',
           max_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
           remaining_connections = ?INFINITY :: non_neg_integer(),
@@ -133,13 +132,6 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 %% `{max_age_seconds, Seconds}' specifies how old a connection may be before
 %% it is closed.
 %%
-%% `{max_age_jitter_ms, Milliseconds}' specifies a random extra amount of time
-%% that is added to `max_age_seconds' so that when a burst of traffic causes a
-%% lot of connections to be opened in a short period of time those connections
-%% are not all also closed at the same time..  It defaults to 20% of
-%% `max_age_seconds' if not specified.  You can specify a value of 0 if you
-%% don't want any jitter added.
-%%
 %% `{max_connections, Count}' specifies the maximum size of the connection
 %% pool.  If Count sockets are already checked out, calls to `checkout' will
 %% fail until until a socket is checked in.
@@ -154,15 +146,8 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 start_link (Id, Host, Port, Options) ->
   State0 = #state{id = Id, host = Host, port = Port},
   State1 = parse_options(Options, State0),
-  MaxAgeJitterMS =
-    case State1 of
-      #state{max_age_ms=infinity}                        -> undefined;
-      #state{max_age_ms=MA, max_age_jitter_ms=undefined} -> round(MA * 0.20);
-      #state{max_age_jitter_ms=MAJ}                      -> MAJ
-    end,
   State = State1#state{remaining_connections = remaining_connections(State1#state.max_connections),
-                       remaining_async_opens = State1#state.max_async_opens,
-                       max_age_jitter_ms = MaxAgeJitterMS},
+                       remaining_async_opens = State1#state.max_async_opens},
 
   gen_server:start_link({local, Id}, ?MODULE, State, []).
 
@@ -239,9 +224,9 @@ parse_options ([ {connect_timeout_ms, ConnectTimeout} | Rest ], State)
 parse_options ([ {max_age_seconds, MaxAge} | Rest ], State)
   when is_integer(MaxAge), MaxAge > 0; MaxAge =:= infinity ->
   parse_options(Rest, State#state{max_age_ms = MaxAge * ?K});
-parse_options ([ {max_age_jitter_ms, JitterMS} | Rest ], State)
+parse_options ([ {max_age_jitter_ms, JitterMS} | Rest ], State) %% Ignore deprecated option.
   when is_integer(JitterMS), JitterMS > 0 ->
-  parse_options(Rest, State#state{max_age_jitter_ms = JitterMS});
+  parse_options(Rest, State);
 parse_options ([ {max_connections, MaxConnections} | Rest ], State)
   when is_integer(MaxConnections), MaxConnections > 0; MaxConnections =:= infinity ->
   parse_options(Rest, State#state{max_connections = MaxConnections});
