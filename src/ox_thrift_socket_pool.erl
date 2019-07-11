@@ -21,13 +21,17 @@
         ]).
 -export([ new/1, destroy/1, checkout/1, checkin/3 ]).   % ox_thrift_connection callbacks.
 -export([ init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3 ]). % gen_server callbacks.
+-export([ checkout_async/1 ]).                          % Internal function for async opens.
 -export([ get_state/1, get_connection/2 ]).             % Debugging.
+-export([ dialyzer_is_too_clever/0 ]).
 
 -define(INFINITY, 1000000).
 -define(M, 1000000).
 -define(K, 1000).
 
 -define(MAX_ASYNC_OPENS_DEFAULT, ?INFINITY).
+
+-define(SPARES_FACTOR_DEFAULT, 0.7).
 
 %% Macros for logging messages in a standard format.
 -define(THRIFT_LOG_MSG(LogFunc, Format),
@@ -100,7 +104,8 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           max_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
           remaining_connections = ?INFINITY :: non_neg_integer(),
           remaining_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
-          last_lifetime_epoch_ms = 0 :: integer(),
+          spares_factor = ?SPARES_FACTOR_DEFAULT :: number(),
+          last_lifetime_epoch_ms = 0 :: integer() | 'infinity',
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
           checkout = 0 :: non_neg_integer(),
@@ -143,6 +148,12 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 %% requests but to avoid overloading the remote server by a large burst.  The
 %% default `max_async_opens' is 1000000 (effectively infinity), and
 %% asynchronous opens may be disabled by setting `max_async_opens' to 0.
+%%
+%% `{spares_factor, Factor}', if greater than zero, will cause new sockets to
+%% be opened preemptively in an attempt to ensure that an idle socket is
+%% always available in the the pool.  The default is 0.7, which empirically
+%% seems to be a good value.  The value 0 prevents new sockets from being
+%% opened preemptively.
 start_link (Id, Host, Port, Options) ->
   State0 = #state{id = Id, host = Host, port = Port},
   State1 = parse_options(Options, State0),
@@ -232,7 +243,10 @@ parse_options ([ {max_connections, MaxConnections} | Rest ], State)
   parse_options(Rest, State#state{max_connections = MaxConnections});
 parse_options ([ {max_async_opens, MaxAsyncOpens} | Rest ], State)
   when is_integer(MaxAsyncOpens), MaxAsyncOpens >= 0 ->
-  parse_options(Rest, State#state{max_async_opens = MaxAsyncOpens}).
+  parse_options(Rest, State#state{max_async_opens = MaxAsyncOpens});
+parse_options ([ {spares_factor, SparesFactor} | Rest ], State)
+  when SparesFactor >= 0 ->
+  parse_options(Rest, State#state{spares_factor = SparesFactor}).
 
 
 -spec destroy(Id::atom()) -> 'ok'.
@@ -254,26 +268,18 @@ destroy (Id) ->
 %% used even if its age exceeds the pool's maximum age.  The pool works this
 %% way to avoid the delay that could happen if there were a large number of
 %% old connections in the pool.  The pool is implemented as a FIFO queue so
-%% that old connections will be quickly removed the pool if is actively being
-%% used.
+%% that old connections will be quickly removed from the pool if it is
+%% actively being used.
 checkout (Id) ->
   case gen_server:call(Id, checkout) of
-    #open_start{reference=Ref, host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, pool_pid = PoolPid} ->
-      case gen_tcp:connect(Host, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ], ConnectTimeoutMS) of
-        Success={ok, Socket} ->
-          ok = gen_tcp:controlling_process(Socket, PoolPid),
-          gen_server:cast(Id, #open_complete{reference = Ref, socket = Socket}),
-          Success;
-        Error ->
-          gen_server:cast(Id, #open_complete{reference = Ref, socket = error}),
-          Error
-      end;
+    OpenStart=#open_start{} ->
+      client_connect(OpenStart);
     OKOrErrorReply={OKOrError, _} when OKOrError =:= ok; OKOrError =:= error ->
       OKOrErrorReply
   end.
 
 
--spec checkin(Id::atom(), Socket::gen_tcp:socket(), Status::ox_thrift_connection:status()) -> Id::atom().
+-spec checkin(Id::atom()|pid(), Socket::gen_tcp:socket(), Status::ox_thrift_connection:status()) -> Id::atom().
 %% @doc Returns a socket to the socket pool.
 %%
 %% The Status is either `ok' to indicate that it is OK to return the socket to
@@ -421,15 +427,17 @@ maybe_put_idle (Socket, Status, CallerPid, State=#state{monitor_queue=MonitorQue
       demonitor(MonitorRef, [ flush ]),
       MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_checkin', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
       ConnectionsOut = ?MAPS_UPDATE(Socket, Connection#connection{monitor_ref = undefined, owner = undefined}, Connections),
-      StateOut = State#state{monitor_queue = MonitorQueueOut, connections = ConnectionsOut},
+      State1 = State#state{monitor_queue = MonitorQueueOut, connections = ConnectionsOut},
 
-      if Status =/= ok                  -> close(Socket, close_remote, StateOut);
+      if Status =/= ok                  -> State2 = close(Socket, close_remote, State1),
+                                           maybe_open_async(State2);
          is_integer(LifetimeEpochMS) ->
           NowMS = now_ms(os:timestamp()),
-          if NowMS >= LifetimeEpochMS   -> close(Socket, close_local, StateOut);
-             true                       -> put_idle(Socket, StateOut)
+          if NowMS >= LifetimeEpochMS   -> State2 = close(Socket, close_local, State1),
+                                           maybe_open_async(State2);
+             true                       -> put_idle(Socket, State1)
           end;
-         true                           -> put_idle(Socket, StateOut)
+         true                           -> put_idle(Socket, State1)
       end;
     undefined ->
       %% This should never happen.
@@ -447,13 +455,64 @@ put_idle (Socket, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue}) ->
   State#state{idle = Idle + 1, busy = Busy - 1, idle_queue = IdleQueueOut}.
 
 
+%% Open a new socket asynchronously if the number of idle sockets is less than
+%% number of desired spares.
+%%
+%% I am not counting these against max_async_opens since they only happen when
+%% a socket is closed which rate-limits naturally.
+maybe_open_async (State=#state{remaining_connections=0}) -> State;
+maybe_open_async (State=#state{spares_factor=0}) -> State;
+maybe_open_async (State=#state{spares_factor=SparesFactor, idle=Idle, busy=Busy}) ->
+  case Idle < desired_spares(Busy, SparesFactor) of
+    true  -> open_async(State);
+    false -> State
+  end.
+
+
+open_async (State=#state{host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS}) ->
+  SocketRef = make_ref(),
+  OpenerPid = spawn(?MODULE, checkout_async, [ #open_start{reference = SocketRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()} ]),
+  MonitorRef = monitor(process, OpenerPid),
+  MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_async', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, State#state.monitor_queue),
+  LifetimeEpochMS = lifetime_epoch_ms(State),
+  ConnectionOut = #connection{socket = SocketRef, lifetime_epoch_ms = LifetimeEpochMS,
+                              monitor_ref = MonitorRef, owner = OpenerPid, use_count = 0},
+  ConnectionsOut = ?MAPS_PUT(SocketRef, ConnectionOut, (State#state.connections)),
+  State#state{checkout = State#state.checkout + 1,
+              remaining_connections = State#state.remaining_connections - 1,
+              %% Don't counting this as an async open.
+              %% remaining_async_opens = State#state.remaining_async_opens - 1,
+              last_lifetime_epoch_ms = LifetimeEpochMS,
+              busy = State#state.busy + 1, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}.
+
+
+checkout_async (OpenStart=#open_start{pool_pid=PoolPid}) ->
+  case client_connect(OpenStart) of
+    {ok, Socket} -> checkin(PoolPid, Socket, ok);
+    {error, _}   -> error
+  end.
+
+
+%% Connection code shared by checkout and checkout_async.
+client_connect (#open_start{reference=Ref, host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, pool_pid = PoolPid}) ->
+  case gen_tcp:connect(Host, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ], ConnectTimeoutMS) of
+    Success={ok, Socket} ->
+      ok = gen_tcp:controlling_process(Socket, PoolPid),
+      gen_server:cast(PoolPid, #open_complete{reference = Ref, socket = Socket}),
+      Success;
+    Error ->
+      gen_server:cast(PoolPid, #open_complete{reference = Ref, socket = error}),
+      Error
+  end.
+
+
 -spec open_start(CallerPid::pid(), State::#state{}) -> {({'ok', Socket::inet:socket()} | {'error', Reason::term()}), #state{}}.
 open_start (CallerPid, State) ->
   case State of
     #state{remaining_connections=0} ->
       {{error, busy}, State#state{checkout = State#state.checkout + 1, error_pool_full=State#state.error_pool_full + 1}}; % ERROR RETURN
     #state{remaining_connections=RemainingConnections, remaining_async_opens=RemainingAsyncOpensIn, busy=Busy,
-           host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, max_age_ms=MaxAgeMS,
+           host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS,
            monitor_queue=MonitorQueue, connections=Connections}
       when RemainingConnections > 0 ->
 
@@ -485,13 +544,7 @@ open_start (CallerPid, State) ->
               MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_client', MonitorRef, CallerPid, client_open, erlang:monotonic_time()}, MonitorQueue),
               RemainingAsyncOpensOut = RemainingAsyncOpensIn - 1
             end,
-          LifetimeEpochMS =
-            case MaxAgeMS of
-              infinity -> infinity;
-              _        -> MaxConnections = remaining_connections(State#state.max_connections),
-                          max(now_ms(os:timestamp()) + MaxAgeMS,
-                              State#state.last_lifetime_epoch_ms + (MaxAgeMS div MaxConnections))
-            end,
+          LifetimeEpochMS = lifetime_epoch_ms(State),
           ConnectionOut = #connection{socket = SocketOrMonitorRef, lifetime_epoch_ms = LifetimeEpochMS,
                                       monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
           ConnectionsOut = ?MAPS_PUT(SocketOrMonitorRef, ConnectionOut, Connections),
@@ -550,6 +603,30 @@ now_ms ({MegaSec, Sec, MicroSec}) ->
 %% 'infinity' to a large number.
 remaining_connections (infinity)       -> ?INFINITY;
 remaining_connections (MaxConnections) -> MaxConnections.
+
+lifetime_epoch_ms (#state{max_age_ms=infinity}) -> infinity;
+lifetime_epoch_ms (State=#state{max_age_ms=MaxAgeMS}) ->
+  MaxConnections = remaining_connections(State#state.max_connections),
+  max(now_ms(os:timestamp()) + MaxAgeMS,
+      State#state.last_lifetime_epoch_ms + (MaxAgeMS div MaxConnections)).
+
+%% Returns the number of desired idle sockets to keep as spares for a given
+%% number of Busy sockets and a spare Factor.  This is used to decide whether
+%% a new socket will be opened proactively when the number of idle sockets is
+%% lower than the desired number of spares.  If Factor is 0 then sockets are
+%% not opened preemptively.  If Factor is less than 1.0 then we use
+%% Busy^Factor as a way to boost the number of spares when Busy is small.
+desired_spares (_Busy, 0)                     -> 0;
+desired_spares (Busy, Factor) when Factor < 1 -> max(1, math:pow(Busy, Factor));
+desired_spares (Busy, Factor)                 -> max(1, floor(Factor * Busy)).
+
+
+dialyzer_is_too_clever () ->
+  %% Without this call, dialyzer cleverly notices that the
+  %% remaining_connections=0 cause in maybe_async_open/1 will never otherwise
+  %% match.
+  State0 = #state{id = test_id, host = "localhost", port = 9999, remaining_connections = 0},
+  State0 = maybe_open_async(State0).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -638,7 +715,7 @@ echo_echoer (Count, Sock) ->
 
 echo_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 2 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, []}),
+  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {spares_factor, 0} ]}),
 
   {ok, Socket0} = checkout(?TEST_ID),
   DataOut = <<"hello">>,
@@ -713,7 +790,7 @@ async_checkout_test () ->
 
 timeout_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0, 0 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1}, {max_connections, 2} ]}),
+  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1}, {max_connections, 2}, {spares_factor, 0} ]}),
 
   ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2}, get_state(?TEST_ID)),
 
@@ -736,16 +813,45 @@ timeout_test () ->
   checkin(?TEST_ID, Socket1, ok),
   ?assertEqual(undefined, get_connection(?TEST_ID, Socket1)),
   ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2, close_local = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{close_local = 1}, get_state(?TEST_ID)),
 
   %% This checkout gets a new socket.
   {ok, Socket2} = checkout(?TEST_ID),
   ?assertMatch(#state{idle = 0, busy = 1, remaining_connections = 1, close_local = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{close_local = 1}, get_state(?TEST_ID)),
   Conn2 = get_connection(?TEST_ID, Socket2),
   ?assertEqual(1, Conn2#connection.use_count),
 
   %% This checkin returns the socket to the pool.
   checkin(?TEST_ID, Socket2, ok),
   ?assertMatch(#state{idle = 1, busy = 0, remaining_connections = 1, close_local = 1}, get_state(?TEST_ID)),
+  ?assertMatch(#state{close_local = 1}, get_state(?TEST_ID)),
+
+  ok = destroy(?TEST_ID),
+  exit(EchoPid, kill).
+
+
+spares_factor_test () ->
+  EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0, 0, 0 ]) end),
+  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_connections, 4}, {spares_factor, 42} ]}),
+
+  ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 4}, get_state(?TEST_ID)),
+
+  {ok, Socket0} = checkout(?TEST_ID),
+  {ok, Socket1} = checkout(?TEST_ID),
+  ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 2}, get_state(?TEST_ID)),
+
+  %% This checkin will cause the socket to be closed and there are no idle
+  %% sockets so a new socket will be opened asynchronously.  This counts as
+  %% busy while it is being opened.
+  checkin(?TEST_ID, Socket1, close),
+  ?assertMatch(#state{idle = 0, busy = 2, remaining_connections = 2}, get_state(?TEST_ID)),
+  timer:sleep(10), %% Wait for new socket to be opened.
+  ?assertMatch(#state{idle = 1, busy = 1, remaining_connections = 2}, get_state(?TEST_ID)),
+
+  checkin(?TEST_ID, Socket0, ok),
+
+  dialyzer_is_too_clever(),
 
   ok = destroy(?TEST_ID),
   exit(EchoPid, kill).
