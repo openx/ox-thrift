@@ -512,13 +512,16 @@ open_complete (#open_complete{reference=Ref, socket=Socket}, State=#state{connec
     error ->
       %% The open failed; remove the connection.
       demonitor(MonitorRef, [ flush ]),
-      State#state{remaining_connections = State#state.remaining_connections + 1, busy = State#state.busy - 1,
+      State#state{remaining_connections = State#state.remaining_connections + 1,
+                  remaining_async_opens = State#state.remaining_async_opens + 1,
+                  busy = State#state.busy - 1,
                   error_connect = State#state.error_connect + 1, connections = ConnectionsOut0};
     _ ->
       %% The open succeeded; update the socket in the connection.
       ConnectionOut = Connection#connection{socket = Socket},
       ConnectionsOut1 = ?MAPS_PUT(Socket, ConnectionOut, ConnectionsOut0),
-      State#state{connections = ConnectionsOut1}
+      State#state{remaining_async_opens = State#state.remaining_async_opens + 1,
+                  connections = ConnectionsOut1}
   end.
 
 
