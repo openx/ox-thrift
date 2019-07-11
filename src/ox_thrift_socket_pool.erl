@@ -840,6 +840,7 @@ transfer_test () ->
   Status =
     case gen_tcp:send(Socket0, <<"closed">>) of
       {error, closed}     -> send_closed;
+      {error, einval}     -> send_closed;
       ok ->
         case gen_tcp:recv(Socket0, 0) of
           {error, closed} -> recv_closed;
