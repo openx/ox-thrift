@@ -27,7 +27,7 @@
 -define(M, 1000000).
 -define(K, 1000).
 
--define(MAX_ASYNC_OPENS_DEFAULT, 10).
+-define(MAX_ASYNC_OPENS_DEFAULT, ?INFINITY).
 
 %% Macros for logging messages in a standard format.
 -define(THRIFT_LOG_MSG(LogFunc, Format),
@@ -138,11 +138,11 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 %%
 %% `{max_async_opens, Count}' limits the number of simultaneous opens the pool
 %% will attempt.  When the limit is reached, the pool will fall back to
-%% opening new connections synchronously.  This is useful to allow a few new
-%% connections to be opened quickly when there is a small burst of requests
-%% but to avoid overloading the remote server by a large burst.  The default
-%% `max_async_opens' is 10, and asynchronous opens may be disabled by setting
-%% `max_async_opens' to 0.
+%% opening new connections synchronously.  This may be useful to allow a few
+%% new connections to be opened quickly when there is a small burst of
+%% requests but to avoid overloading the remote server by a large burst.  The
+%% default `max_async_opens' is 1000000 (effectively infinity), and
+%% asynchronous opens may be disabled by setting `max_async_opens' to 0.
 start_link (Id, Host, Port, Options) ->
   State0 = #state{id = Id, host = Host, port = Port},
   State1 = parse_options(Options, State0),
