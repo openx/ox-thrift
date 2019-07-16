@@ -686,6 +686,31 @@ echo_test () ->
   exit(EchoPid, kill).
 
 
+-define(TEST_ASYNC_OPENS, 2).
+
+async_checkout_test () ->
+  EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
+  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_async_opens, ?TEST_ASYNC_OPENS} ]}),
+
+  %% Normal async checkout; get_state uses call so we never see
+  %% remaining_async_opens at less than max.
+  ?assertMatch(#state{remaining_async_opens = ?TEST_ASYNC_OPENS}, get_state(?TEST_ID)),
+  {ok, Socket0} = checkout(?TEST_ID),
+  ?assertMatch(#state{remaining_async_opens = ?TEST_ASYNC_OPENS}, get_state(?TEST_ID)),
+  checkin(?TEST_ID, Socket0, close),
+  ?assertMatch(#state{remaining_async_opens = ?TEST_ASYNC_OPENS}, get_state(?TEST_ID)),
+
+  %% Copy checkout/1 implmentation so we can verify that remaining_async_opens
+  %% is decremented properly and is incremented when connect fails.
+  #open_start{reference=Ref} = gen_server:call(?TEST_ID, checkout),
+  ?assertMatch(#state{remaining_async_opens = ?TEST_ASYNC_OPENS - 1}, get_state(?TEST_ID)),
+  gen_server:cast(?TEST_ID, #open_complete{reference = Ref, socket = error}),
+  ?assertMatch(#state{remaining_async_opens = ?TEST_ASYNC_OPENS}, get_state(?TEST_ID)),
+
+  ok = destroy(?TEST_ID),
+  exit(EchoPid, kill).
+
+
 timeout_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0, 0 ]) end),
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1}, {max_connections, 2} ]}),
