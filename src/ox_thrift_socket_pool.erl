@@ -21,7 +21,7 @@
         ]).
 -export([ new/1, destroy/1, checkout/1, checkin/3 ]).   % ox_thrift_connection callbacks.
 -export([ init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3 ]). % gen_server callbacks.
--export([ checkout_async/1 ]).                          % Internal function for async opens.
+-export([ client_connect/1 ]).                          % Internal function for async opens.
 -export([ get_state/1, get_connection/2 ]).             % Debugging.
 -export([ dialyzer_is_too_clever/0 ]).
 
@@ -208,6 +208,7 @@ print_stats (Id) -> print_stats(Id, 1, infinity).
           use_count = 0 :: non_neg_integer()}).
 
 -record(open_start, {
+          action = error({required, action}) :: 'client_open' | 'async_open',
           reference = error({required, reference}) :: reference(),
           host = error({required, host}) :: inet:hostname() | inet:ip_address(),
           port = error({required, port}) :: inet:port_number(),
@@ -215,8 +216,10 @@ print_stats (Id) -> print_stats(Id, 1, infinity).
           pool_pid = error({required, pool_pid}) :: pid()}).
 
 -record(open_complete, {
+          action = error({required, action}) :: 'client_open' | 'async_open' | 'error',
           reference = error({required, reference}) :: reference(),
-          socket :: inet:socket() | 'error'}).
+          socket :: inet:socket() | 'undefined',
+          owner :: pid() }).
 
 
 -spec new({Id::atom(), Host::inet:hostname(), Port::inet:port_number(), Options::list()}) -> Id::atom().
@@ -471,7 +474,7 @@ maybe_open_async (State=#state{spares_factor=SparesFactor, idle=Idle, busy=Busy}
 
 open_async (State=#state{host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS}) ->
   SocketRef = make_ref(),
-  OpenerPid = spawn(?MODULE, checkout_async, [ #open_start{reference = SocketRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()} ]),
+  OpenerPid = spawn(?MODULE, client_connect, [ #open_start{action = async_open, reference = SocketRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()} ]),
   MonitorRef = monitor(process, OpenerPid),
   MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_async', MonitorRef, OpenerPid, SocketRef, erlang:monotonic_time()}, State#state.monitor_queue),
   LifetimeEpochMS = lifetime_epoch_ms(State),
@@ -486,22 +489,15 @@ open_async (State=#state{host=Host, port=Port, connect_timeout_ms=ConnectTimeout
               busy = State#state.busy + 1, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}.
 
 
-checkout_async (OpenStart=#open_start{pool_pid=PoolPid}) ->
-  case client_connect(OpenStart) of
-    {ok, Socket} -> checkin(PoolPid, Socket, ok);
-    {error, _}   -> error
-  end.
-
-
 %% Connection code shared by checkout and checkout_async.
-client_connect (#open_start{reference=Ref, host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, pool_pid = PoolPid}) ->
+client_connect (#open_start{action=Action, reference=Ref, host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, pool_pid = PoolPid}) ->
   case gen_tcp:connect(Host, Port, [ binary, {active, false}, {packet, raw}, {nodelay, true} ], ConnectTimeoutMS) of
     Success={ok, Socket} ->
       ok = gen_tcp:controlling_process(Socket, PoolPid),
-      gen_server:cast(PoolPid, #open_complete{reference = Ref, socket = Socket}),
+      gen_server:cast(PoolPid, #open_complete{action = Action, reference = Ref, socket = Socket, owner = self()}),
       Success;
     Error ->
-      gen_server:cast(PoolPid, #open_complete{reference = Ref, socket = error}),
+      gen_server:cast(PoolPid, #open_complete{action = error, reference = Ref, owner = self()}),
       Error
   end.
 
@@ -539,7 +535,7 @@ open_start (CallerPid, State) ->
               %% the actual opening of the connection to the client so that it
               %% doesn't block other requests.  Once the client has opened the
               %% socket open_complete will be called to finalize the state.
-              Reply = #open_start{reference = MonitorRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()},
+              Reply = #open_start{action = client_open, reference = MonitorRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()},
               SocketOrMonitorRef = MonitorRef,
               MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_client', MonitorRef, CallerPid, client_open, erlang:monotonic_time()}, MonitorQueue),
               RemainingAsyncOpensOut = RemainingAsyncOpensIn - 1
@@ -558,10 +554,10 @@ open_start (CallerPid, State) ->
 
 
 -spec open_complete(#open_complete{}, #state{}) -> #state{}.
-open_complete (#open_complete{reference=Ref, socket=Socket}, State=#state{connections=Connections}) ->
+open_complete (#open_complete{action=Action, reference=Ref, socket=Socket, owner=CallerPid}, State=#state{connections=Connections}) ->
   Connection=#connection{monitor_ref=MonitorRef} = ?MAPS_GET(Ref, Connections),
   ConnectionsOut0 = ?MAPS_REMOVE(Ref, Connections),
-  case Socket of
+  case Action of
     error ->
       %% The open failed; remove the connection.
       demonitor(MonitorRef, [ flush ]),
@@ -573,8 +569,13 @@ open_complete (#open_complete{reference=Ref, socket=Socket}, State=#state{connec
       %% The open succeeded; update the socket in the connection.
       ConnectionOut = Connection#connection{socket = Socket},
       ConnectionsOut1 = ?MAPS_PUT(Socket, ConnectionOut, ConnectionsOut0),
-      State#state{remaining_async_opens = State#state.remaining_async_opens + 1,
-                  connections = ConnectionsOut1}
+      State0 =
+        State#state{remaining_async_opens = State#state.remaining_async_opens + 1,
+                    connections = ConnectionsOut1},
+        case Action of
+          async_open  -> maybe_put_idle(Socket, ok, CallerPid, State0);
+          client_open -> State0
+        end
   end.
 
 
@@ -781,7 +782,7 @@ async_checkout_test () ->
   %% is decremented properly and is incremented when connect fails.
   #open_start{reference=Ref} = gen_server:call(?TEST_ID, checkout),
   ?assertMatch(#state{remaining_async_opens = ?TEST_ASYNC_OPENS - 1}, get_state(?TEST_ID)),
-  gen_server:cast(?TEST_ID, #open_complete{reference = Ref, socket = error}),
+  gen_server:cast(?TEST_ID, #open_complete{action = error, reference = Ref, owner = self()}),
   ?assertMatch(#state{remaining_async_opens = ?TEST_ASYNC_OPENS}, get_state(?TEST_ID)),
 
   ok = destroy(?TEST_ID),
