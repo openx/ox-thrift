@@ -105,7 +105,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           remaining_connections = ?INFINITY :: non_neg_integer(),
           remaining_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
           spares_factor = ?SPARES_FACTOR_DEFAULT :: number(),
-          last_lifetime_epoch_ms = 0 :: integer() | 'infinity',
+          last_lifetime_ts :: integer() | 'infinity',
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
           checkout = 0 :: non_neg_integer(),
@@ -155,7 +155,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 %% seems to be a good value.  The value 0 prevents new sockets from being
 %% opened preemptively.
 start_link (Id, Host, Port, Options) ->
-  State0 = #state{id = Id, host = Host, port = Port},
+  State0 = #state{id = Id, host = Host, port = Port, last_lifetime_ts = erlang:monotonic_time()},
   State1 = parse_options(Options, State0),
   State = State1#state{remaining_connections = remaining_connections(State1#state.max_connections),
                        remaining_async_opens = State1#state.max_async_opens},
@@ -202,7 +202,7 @@ print_stats (Id) -> print_stats(Id, 1, infinity).
 
 -record(connection, {
           socket = error({required, socket}) :: inet:socket() | reference(),
-          lifetime_epoch_ms = error({required, lifetime_epoch_ms}) :: non_neg_integer() | 'infinity',
+          lifetime_ts = error({required, lifetime_ts}) :: integer() | 'infinity',
           monitor_ref :: reference() | 'undefined',
           owner :: pid() | 'undefined',
           use_count = 0 :: non_neg_integer()}).
@@ -426,7 +426,7 @@ get_idle (CallerPid, State=#state{idle=Idle, busy=Busy, idle_queue=IdleQueue, mo
 
 maybe_put_idle (Socket, Status, CallerPid, State=#state{monitor_queue=MonitorQueue, connections=Connections}) ->
   case ?MAPS_GET(Socket, Connections, undefined) of
-    Connection=#connection{lifetime_epoch_ms=LifetimeEpochMS, monitor_ref=MonitorRef, owner=CallerPid} ->
+    Connection=#connection{lifetime_ts=LifetimeTS, monitor_ref=MonitorRef, owner=CallerPid} ->
       demonitor(MonitorRef, [ flush ]),
       MonitorQueueOut = ?MONITOR_QUEUE_ADD({'demonitor_checkin', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
       ConnectionsOut = ?MAPS_UPDATE(Socket, Connection#connection{monitor_ref = undefined, owner = undefined}, Connections),
@@ -434,9 +434,9 @@ maybe_put_idle (Socket, Status, CallerPid, State=#state{monitor_queue=MonitorQue
 
       if Status =/= ok                  -> State2 = close(Socket, close_remote, State1),
                                            maybe_open_async(State2);
-         is_integer(LifetimeEpochMS) ->
-          NowMS = now_ms(os:timestamp()),
-          if NowMS >= LifetimeEpochMS   -> State2 = close(Socket, close_local, State1),
+         is_integer(LifetimeTS) ->
+          NowTS = erlang:monotonic_time(),
+          if NowTS >= LifetimeTS        -> State2 = close(Socket, close_local, State1),
                                            maybe_open_async(State2);
              true                       -> put_idle(Socket, State1)
           end;
@@ -477,15 +477,15 @@ open_async (State=#state{host=Host, port=Port, connect_timeout_ms=ConnectTimeout
   OpenerPid = spawn(?MODULE, client_connect, [ #open_start{action = async_open, reference = SocketRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()} ]),
   MonitorRef = monitor(process, OpenerPid),
   MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_async', MonitorRef, OpenerPid, SocketRef, erlang:monotonic_time()}, State#state.monitor_queue),
-  LifetimeEpochMS = lifetime_epoch_ms(State),
-  ConnectionOut = #connection{socket = SocketRef, lifetime_epoch_ms = LifetimeEpochMS,
+  LifetimeTS = lifetime_ts(State),
+  ConnectionOut = #connection{socket = SocketRef, lifetime_ts = LifetimeTS,
                               monitor_ref = MonitorRef, owner = OpenerPid, use_count = 0},
   ConnectionsOut = ?MAPS_PUT(SocketRef, ConnectionOut, (State#state.connections)),
   State#state{checkout = State#state.checkout + 1,
               remaining_connections = State#state.remaining_connections - 1,
               %% Don't counting this as an async open.
               %% remaining_async_opens = State#state.remaining_async_opens - 1,
-              last_lifetime_epoch_ms = LifetimeEpochMS,
+              last_lifetime_ts = LifetimeTS,
               busy = State#state.busy + 1, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}.
 
 
@@ -540,14 +540,14 @@ open_start (CallerPid, State) ->
               MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_client', MonitorRef, CallerPid, client_open, erlang:monotonic_time()}, MonitorQueue),
               RemainingAsyncOpensOut = RemainingAsyncOpensIn - 1
             end,
-          LifetimeEpochMS = lifetime_epoch_ms(State),
-          ConnectionOut = #connection{socket = SocketOrMonitorRef, lifetime_epoch_ms = LifetimeEpochMS,
+          LifetimeTS = lifetime_ts(State),
+          ConnectionOut = #connection{socket = SocketOrMonitorRef, lifetime_ts = LifetimeTS,
                                       monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
           ConnectionsOut = ?MAPS_PUT(SocketOrMonitorRef, ConnectionOut, Connections),
           {Reply, State#state{checkout = State#state.checkout + 1, % SUCCESS RETURN
                               remaining_connections = RemainingConnections - 1,
                               remaining_async_opens = RemainingAsyncOpensOut,
-                              last_lifetime_epoch_ms = LifetimeEpochMS,
+                              last_lifetime_ts = LifetimeTS,
                               busy = Busy + 1, monitor_queue = MonitorQueueOut, connections = ConnectionsOut}}
       end
   end.
@@ -596,20 +596,17 @@ increment_if_match (Value, A, A) -> Value + 1;
 increment_if_match (Value, _, _) -> Value.
 
 
-now_ms ({MegaSec, Sec, MicroSec}) ->
-  (MegaSec * ?M + Sec) * ?K + MicroSec div ?K.
-
-
 %% We're using ets:update_counter to maintain max_connections, so translate
 %% 'infinity' to a large number.
 remaining_connections (infinity)       -> ?INFINITY;
 remaining_connections (MaxConnections) -> MaxConnections.
 
-lifetime_epoch_ms (#state{max_age_ms=infinity}) -> infinity;
-lifetime_epoch_ms (State=#state{max_age_ms=MaxAgeMS}) ->
+lifetime_ts (#state{max_age_ms=infinity}) -> infinity;
+lifetime_ts (State=#state{max_age_ms=MaxAgeMS}) ->
   MaxConnections = remaining_connections(State#state.max_connections),
-  max(now_ms(os:timestamp()) + MaxAgeMS,
-      State#state.last_lifetime_epoch_ms + (MaxAgeMS div MaxConnections)).
+  MaxAgeNative = erlang:convert_time_unit(MaxAgeMS, milli_seconds, native),
+  max(erlang:monotonic_time() + MaxAgeNative,
+      State#state.last_lifetime_ts + (MaxAgeNative div MaxConnections)).
 
 %% Returns the number of desired idle sockets to keep as spares for a given
 %% number of Busy sockets and a spare Factor.  This is used to decide whether
@@ -672,9 +669,6 @@ parse_options_test () ->
   ?assertMatch(#state{max_connections = infinity}, parse_options([ {max_connections, infinity} ], BaseState)),
   ?assertMatch(#state{max_async_opens = 10}, parse_options([ {max_async_opens, 10} ], BaseState)),
   ok.
-
-now_ms_test () ->
-  ?assertEqual(1002003004, now_ms({1, 002003, 004005})).
 
 start_stop_test () ->
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, []}),
