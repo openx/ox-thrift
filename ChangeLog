@@ -3,6 +3,7 @@
   does not block other requests.
 - ox_thrift_socket_pool: Add checkout and open stats.
 - ox_thrift_socket_pool: Add spares_factor option to maintain idle pool.
+- ox_thrift_socket_pool: Add a simple DNS cache.
 - Add ox_thrift_shackle_client module.
 
 * Thu May 23 2019 David Hull <david.hull@openx.com> 0.19.0
