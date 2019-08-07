@@ -16,6 +16,8 @@
 -behaviour(gen_server).
 -behaviour(ox_thrift_connection).
 
+-include_lib("kernel/include/inet.hrl").
+
 -export([ start_link/4, transfer/3, stats/1             % API.
         , print_stats/3, print_stats/2, print_stats/1
         ]).
@@ -94,7 +96,12 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-record(dns_cache, {
+          ip_addresses :: tuple(),
+          lifetime_ts :: integer() }).
+
 -record(state, {
+          %% config
           id = error({required, id}) :: atom(),
           host = error({required, host}) :: inet:hostname() | inet:ip_address(),
           port = error({required, port}) :: inet:port_number(),
@@ -102,10 +109,13 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           max_age_ms = infinity :: pos_integer() | 'infinity',
           max_connections = infinity :: pos_integer() | 'infinity',
           max_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
+          spares_factor = ?SPARES_FACTOR_DEFAULT :: number(),
+          %% state
           remaining_connections = ?INFINITY :: non_neg_integer(),
           remaining_async_opens = ?MAX_ASYNC_OPENS_DEFAULT :: non_neg_integer(),
-          spares_factor = ?SPARES_FACTOR_DEFAULT :: number(),
-          last_lifetime_ts :: integer() | 'infinity',
+          dns_cache :: #dns_cache{} | 'undefined',
+          last_lifetime_ts = 'infinity' :: integer() | 'infinity',
+          %% stats
           idle = 0 :: non_neg_integer(),
           busy = 0 :: non_neg_integer(),
           checkout = 0 :: non_neg_integer(),
@@ -115,6 +125,7 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
           error_pool_full = 0 :: non_neg_integer(),
           error_connect = 0 :: non_neg_integer(),
           error_socket_not_found = 0 :: non_neg_integer(),
+          %% debugging
           idle_queue = undefined :: queue:queue() | 'undefined',
           monitor_queue = undefined :: queue:queue() | 'undefined', %% DEBUG_CONNECTIONS
           connections = undefined :: map_type() | 'undefined'}).
@@ -472,16 +483,18 @@ maybe_open_async (State=#state{spares_factor=SparesFactor, idle=Idle, busy=Busy}
   end.
 
 
-open_async (State=#state{host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS}) ->
+open_async (State=#state{host=Host, port=Port, connect_timeout_ms=ConnectTimeoutMS, dns_cache=DnsCache}) ->
   SocketRef = make_ref(),
-  OpenerPid = spawn(?MODULE, client_connect, [ #open_start{action = async_open, reference = SocketRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()} ]),
+  {HostIp, DnsCacheOut} = lookup_ip(Host, DnsCache),
+  OpenerPid = spawn(?MODULE, client_connect, [ #open_start{action = async_open, reference = SocketRef, host = HostIp, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()} ]),
   MonitorRef = monitor(process, OpenerPid),
   MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_async', MonitorRef, OpenerPid, SocketRef, erlang:monotonic_time()}, State#state.monitor_queue),
   LifetimeTS = lifetime_ts(State),
   ConnectionOut = #connection{socket = SocketRef, lifetime_ts = LifetimeTS,
                               monitor_ref = MonitorRef, owner = OpenerPid, use_count = 0},
   ConnectionsOut = ?MAPS_PUT(SocketRef, ConnectionOut, (State#state.connections)),
-  State#state{checkout = State#state.checkout + 1,
+  State#state{dns_cache = DnsCacheOut,
+              checkout = State#state.checkout + 1,
               remaining_connections = State#state.remaining_connections - 1,
               %% Don't counting this as an async open.
               %% remaining_async_opens = State#state.remaining_async_opens - 1,
@@ -529,13 +542,15 @@ open_start (CallerPid, State) ->
               Reply = Success,
               SocketOrMonitorRef = Socket,
               MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_server', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, MonitorQueue),
-              RemainingAsyncOpensOut = RemainingAsyncOpensIn;
+              RemainingAsyncOpensOut = RemainingAsyncOpensIn,
+              DnsCacheOut = State#state.dns_cache;
             false ->
               %% Update our state as if the connection was opened, but leave
               %% the actual opening of the connection to the client so that it
               %% doesn't block other requests.  Once the client has opened the
               %% socket open_complete will be called to finalize the state.
-              Reply = #open_start{action = client_open, reference = MonitorRef, host = Host, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()},
+              {HostIp, DnsCacheOut} = lookup_ip(Host, State#state.dns_cache),
+              Reply = #open_start{action = client_open, reference = MonitorRef, host = HostIp, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()},
               SocketOrMonitorRef = MonitorRef,
               MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_client', MonitorRef, CallerPid, client_open, erlang:monotonic_time()}, MonitorQueue),
               RemainingAsyncOpensOut = RemainingAsyncOpensIn - 1
@@ -544,7 +559,8 @@ open_start (CallerPid, State) ->
           ConnectionOut = #connection{socket = SocketOrMonitorRef, lifetime_ts = LifetimeTS,
                                       monitor_ref = MonitorRef, owner = CallerPid, use_count = 1},
           ConnectionsOut = ?MAPS_PUT(SocketOrMonitorRef, ConnectionOut, Connections),
-          {Reply, State#state{checkout = State#state.checkout + 1, % SUCCESS RETURN
+          {Reply, State#state{dns_cache = DnsCacheOut, % SUCCESS RETURN
+                              checkout = State#state.checkout + 1,
                               remaining_connections = RemainingConnections - 1,
                               remaining_async_opens = RemainingAsyncOpensOut,
                               last_lifetime_ts = LifetimeTS,
@@ -619,6 +635,32 @@ desired_spares (Busy, Factor) when Factor < 1 -> max(1, math:pow(Busy, Factor));
 desired_spares (Busy, Factor)                 -> max(1, floor(Factor * Busy)).
 
 
+-spec lookup_ip(inet:hostname() | inet:ip_address(), #dns_cache{}) -> {inet:ip_address(), #dns_cache{}}.
+lookup_ip (IpAddress, DnsCache) when is_tuple(IpAddress) ->
+  {IpAddress, DnsCache};
+lookup_ip (Hostname, DnsCache) ->
+  NowTS = erlang:monotonic_time(),
+  DnsCacheOut =
+    case is_record(DnsCache, dns_cache) andalso NowTS =< DnsCache#dns_cache.lifetime_ts of
+      true  -> DnsCache;
+      false -> case inet_res:gethostbyname(Hostname) of
+                 {ok, #hostent{h_addr_list=IpAddrList=[_|_]}} ->
+                   IpAddrTuple = list_to_tuple(IpAddrList),
+                   #dns_cache{ip_addresses = IpAddrTuple, lifetime_ts = NowTS + erlang:convert_time_unit(1, second, native)};
+                 _ ->
+                   DnsCache
+               end
+    end,
+  {choose_ip(Hostname, DnsCacheOut), DnsCacheOut}.
+
+choose_ip (_Hostname, #dns_cache{ip_addresses=IpAddrs}) when is_tuple(IpAddrs) andalso size(IpAddrs) > 0 ->
+  case size(IpAddrs) of
+    1    -> element(1, IpAddrs);
+    Size -> element(rand:uniform(Size), IpAddrs)
+  end;
+choose_ip (Hostname, _DnsCache) -> Hostname.
+
+
 dialyzer_is_too_clever () ->
   %% Without this call, dialyzer cleverly notices that the
   %% remaining_connections=0 cause in maybe_async_open/1 will never otherwise
@@ -669,6 +711,34 @@ parse_options_test () ->
   ?assertMatch(#state{max_connections = infinity}, parse_options([ {max_connections, infinity} ], BaseState)),
   ?assertMatch(#state{max_async_opens = 10}, parse_options([ {max_async_opens, 10} ], BaseState)),
   ok.
+
+
+choose_ip_test () ->
+  NowTS = erlang:monotonic_time(),
+  ?assertEqual("test", choose_ip("test", undefined)),
+  ?assertEqual("test", choose_ip("test", #dns_cache{ip_addresses = {}, lifetime_ts = NowTS})),
+  ?assertEqual({127, 0, 0, 1}, choose_ip("test", #dns_cache{ip_addresses = { {127, 0, 0, 1} }, lifetime_ts = NowTS})),
+  ok.
+
+
+lookup_ip_test () ->
+  NowTS = erlang:monotonic_time(),
+  NextTS = NowTS + erlang:convert_time_unit(1, second, native),
+  ?assertMatch({{127, 0, 0, 1}, _}, lookup_ip({127, 0, 0, 1}, undefined)),
+  ?assertMatch({{127, 0, 0, 1}, #dns_cache{ip_addresses={{127, 0, 0, 1}}}}, lookup_ip(localhost, undefined)),
+  D2 = #dns_cache{ip_addresses = {{1, 2, 3, 4}}, lifetime_ts = NextTS},
+  ?assertEqual({{1, 2, 3, 4 }, D2}, lookup_ip("localhost", D2)),
+  ?assertMatch({{1, 1, 1, 1}, _}, lookup_ip(localhost, D2#dns_cache{ip_addresses={{1, 1, 1, 1}, {1, 1, 1, 1}}})),
+  D3 = D2#dns_cache{lifetime_ts = NowTS},
+  {I3, #dns_cache{lifetime_ts=L3}} = lookup_ip("localhost", D3),
+  ?assertMatch({127, 0, 0, 1}, I3),
+  ?assert(L3 > NowTS),
+
+  ?assertMatch({"bad!domain", _}, lookup_ip("bad!domain", undefined)),
+  ?assertMatch({{1, 2, 3, 4}, D3}, lookup_ip("bad!domain", D3)),
+
+  ok.
+
 
 start_stop_test () ->
   ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, []}),
