@@ -24,6 +24,7 @@
 -export([ new/1, destroy/1, checkout/1, checkin/3 ]).   % ox_thrift_connection callbacks.
 -export([ init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3 ]). % gen_server callbacks.
 -export([ client_connect/1 ]).                          % Internal function for async opens.
+-export([ refresh_ip/2 ]).                              % Internal function for DNS lookup refresh.
 -export([ get_state/1, get_connection/2 ]).             % Debugging.
 -export([ dialyzer_is_too_clever/0 ]).
 
@@ -34,6 +35,8 @@
 -define(MAX_ASYNC_OPENS_DEFAULT, ?INFINITY).
 
 -define(SPARES_FACTOR_DEFAULT, 0.7).
+
+-define(DNS_CACHE_REFRESH_SECONDS, 1).
 
 %% Macros for logging messages in a standard format.
 -define(THRIFT_LOG_MSG(LogFunc, Format),
@@ -97,8 +100,8 @@ dict_get(Key, Dict, Default) -> case dict:find(Key, Dict) of {ok, Value} -> Valu
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -record(dns_cache, {
-          ip_addresses :: tuple(),
-          lifetime_ts :: integer() }).
+          ip_addresses :: tuple() | 'undefined',
+          next_refresh_ts :: integer() }).
 
 -record(state, {
           %% config
@@ -234,6 +237,10 @@ print_stats (Id) -> print_stats(Id, 1, infinity).
           socket :: inet:socket() | 'undefined',
           owner :: pid() }).
 
+-record(dns_cache_refresh, {
+          action = error({required, action}) :: 'update' | 'error',
+          ip_addr_list :: list() | 'undefined',
+          error :: term() }).
 
 -spec new({Id::atom(), Host::inet:hostname(), Port::inet:port_number(), Options::list()}) -> Id::atom().
 %% @doc Creates a new socket pool.
@@ -378,10 +385,19 @@ handle_call (Request, _From, State) ->
 handle_cast ({checkin, Socket, Status, Pid}, State) ->
   StateOut = maybe_put_idle(Socket, Status, Pid, State),
   {noreply, StateOut};
-%% @hidden
 handle_cast(OpenComplete=#open_complete{}, State) ->
   StateOut = open_complete(OpenComplete, State),
   {noreply, StateOut};
+handle_cast (#dns_cache_refresh{action=Action, ip_addr_list=IpAddrList}, State) ->
+  DnsCache =
+    case Action of
+      update ->
+        IpAddrTuple = list_to_tuple(IpAddrList),
+        State#state.dns_cache#dns_cache{ip_addresses = IpAddrTuple};
+      error ->
+        ok
+    end,
+  {noreply, State#state{dns_cache = DnsCache}};
 handle_cast (_, State) ->
   {noreply, State}.
 
@@ -643,17 +659,7 @@ lookup_ip (IpAddress, DnsCache) when is_tuple(IpAddress) ->
   {IpAddress, DnsCache};
 lookup_ip (Hostname, DnsCache) ->
   NowTS = erlang:monotonic_time(),
-  DnsCacheOut =
-    case is_record(DnsCache, dns_cache) andalso NowTS =< DnsCache#dns_cache.lifetime_ts of
-      true  -> DnsCache;
-      false -> case inet_res:gethostbyname(Hostname) of
-                 {ok, #hostent{h_addr_list=IpAddrList=[_|_]}} ->
-                   IpAddrTuple = list_to_tuple(IpAddrList),
-                   #dns_cache{ip_addresses = IpAddrTuple, lifetime_ts = NowTS + erlang:convert_time_unit(1, second, native)};
-                 _ ->
-                   DnsCache
-               end
-    end,
+  DnsCacheOut = maybe_refresh_ip(DnsCache, Hostname, NowTS),
   {choose_ip(Hostname, DnsCacheOut), DnsCacheOut}.
 
 choose_ip (_Hostname, #dns_cache{ip_addresses=IpAddrs}) when is_tuple(IpAddrs) andalso size(IpAddrs) > 0 ->
@@ -662,6 +668,27 @@ choose_ip (_Hostname, #dns_cache{ip_addresses=IpAddrs}) when is_tuple(IpAddrs) a
     Size -> element(rand:uniform(Size), IpAddrs)
   end;
 choose_ip (Hostname, _DnsCache) -> Hostname.
+
+maybe_refresh_ip (undefined, Hostname, NowTS) ->
+  spawn(?MODULE, refresh_ip, [ Hostname, self() ]),
+  #dns_cache{next_refresh_ts = NowTS + erlang:convert_time_unit(?DNS_CACHE_REFRESH_SECONDS, second, native)};
+maybe_refresh_ip (DnsCache=#dns_cache{next_refresh_ts=NextRefreshTS}, Hostname, NowTS) when NowTS > NextRefreshTS ->
+  spawn(?MODULE, refresh_ip, [ Hostname, self() ]),
+  DnsCache#dns_cache{next_refresh_ts = NowTS + erlang:convert_time_unit(?DNS_CACHE_REFRESH_SECONDS, second, native)};
+maybe_refresh_ip (DnsCache, _Hostname, _NowTS) -> DnsCache.
+
+%% Dializer doesn't believe that h_addr_list=[] can match.
+-dialyzer({no_match, refresh_ip/2}).
+
+refresh_ip (Hostname, PoolPid) ->
+  case inet_res:gethostbyname(Hostname) of
+    {ok, #hostent{h_addr_list=[]}} ->
+      gen_server:cast(PoolPid, #dns_cache_refresh{action = error, error = empty});
+    {ok, #hostent{h_addr_list=IpAddrList}} ->
+      gen_server:cast(PoolPid, #dns_cache_refresh{action = update, ip_addr_list = IpAddrList});
+    {error, Reason} ->
+      gen_server:cast(PoolPid, #dns_cache_refresh{action = error, error = Reason})
+  end.
 
 
 dialyzer_is_too_clever () ->
@@ -717,28 +744,39 @@ parse_options_test () ->
 
 
 choose_ip_test () ->
-  NowTS = erlang:monotonic_time(),
   ?assertEqual("test", choose_ip("test", undefined)),
-  ?assertEqual("test", choose_ip("test", #dns_cache{ip_addresses = {}, lifetime_ts = NowTS})),
-  ?assertEqual({127, 0, 0, 1}, choose_ip("test", #dns_cache{ip_addresses = { {127, 0, 0, 1} }, lifetime_ts = NowTS})),
+  ?assertEqual("test", choose_ip("test", #dns_cache{ip_addresses = {}})),
+  ?assertEqual({127, 0, 0, 1}, choose_ip("test", #dns_cache{ip_addresses = { {127, 0, 0, 1} }})),
   ok.
 
 
 lookup_ip_test () ->
-  NowTS = erlang:monotonic_time(),
-  NextTS = NowTS + erlang:convert_time_unit(1, second, native),
   ?assertMatch({{127, 0, 0, 1}, _}, lookup_ip({127, 0, 0, 1}, undefined)),
-  ?assertMatch({{127, 0, 0, 1}, #dns_cache{ip_addresses={{127, 0, 0, 1}}}}, lookup_ip(localhost, undefined)),
-  D2 = #dns_cache{ip_addresses = {{1, 2, 3, 4}}, lifetime_ts = NextTS},
+
+  ?assertMatch({localhost, #dns_cache{ip_addresses=undefined, next_refresh_ts=NR}} when is_integer(NR), lookup_ip(localhost, undefined)),
+  receive {'$gen_cast', U1} -> ok end,
+  ?assertEqual(#dns_cache_refresh{action=update, ip_addr_list=[ {127, 0, 0, 1} ]}, U1),
+
+  NowTS = erlang:monotonic_time(),
+  NextTS = NowTS + erlang:convert_time_unit(?DNS_CACHE_REFRESH_SECONDS, second, native),
+  D2 = #dns_cache{ip_addresses = {{1, 2, 3, 4}}, next_refresh_ts = NextTS},
+  receive U2 -> error({unexpected, U2}) after 100 -> ok end,
   ?assertEqual({{1, 2, 3, 4 }, D2}, lookup_ip("localhost", D2)),
   ?assertMatch({{1, 1, 1, 1}, _}, lookup_ip(localhost, D2#dns_cache{ip_addresses={{1, 1, 1, 1}, {1, 1, 1, 1}}})),
-  D3 = D2#dns_cache{lifetime_ts = NowTS},
-  {I3, #dns_cache{lifetime_ts=L3}} = lookup_ip("localhost", D3),
-  ?assertMatch({127, 0, 0, 1}, I3),
-  ?assert(L3 > NowTS),
+
+  D3 = D2#dns_cache{next_refresh_ts = NowTS},
+  ?assertMatch({{1, 2, 3, 4}, #dns_cache{next_refresh_ts=NR}} when is_integer(NR) andalso NR >= NextTS,
+               lookup_ip("localhost", D3)),
+  receive {'$gen_cast', U3} -> ok end,
+  ?assertEqual(#dns_cache_refresh{action=update, ip_addr_list=[ {127, 0, 0, 1} ]}, U3),
 
   ?assertMatch({"bad!domain", _}, lookup_ip("bad!domain", undefined)),
-  ?assertMatch({{1, 2, 3, 4}, D3}, lookup_ip("bad!domain", D3)),
+  receive {'$gen_cast', U4} -> ok end,
+  ?assertMatch(#dns_cache_refresh{action=error, error=nxdomain}, U4),
+
+  ?assertMatch({{1, 2, 3, 4}, _}, lookup_ip("bad!domain", D3)),
+  receive {'$gen_cast', U5} -> ok end,
+  ?assertMatch(#dns_cache_refresh{action=error, error=nxdomain}, U5),
 
   ok.
 
@@ -824,6 +862,10 @@ echo_test () ->
   ?assertMatch({_, 0}, lists:keyfind(close_local, 1, Stats)),
   ?assertMatch({_, 1}, lists:keyfind(close_remote, 1, Stats)),
   ?assertMatch({_, 0}, lists:keyfind(close_die, 1, Stats)),
+
+  %% Check that DNS refresh happened.
+  #state{dns_cache=DnsCache} = get_state(?TEST_ID),
+  ?assertMatch(#dns_cache{ip_addresses={{127, 0, 0, 1}}}, DnsCache),
 
   print_stats(?TEST_ID, 1, 2),
 
