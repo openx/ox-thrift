@@ -506,7 +506,7 @@ open_async (State=#state{host=Host, port=Port, connect_timeout_ms=ConnectTimeout
   {HostIp, DnsCacheOut} = lookup_ip(Host, DnsCache),
   OpenerPid = spawn(?MODULE, client_connect, [ #open_start{action = async_open, reference = SocketRef, async_open_increment = 0, host = HostIp, port = Port, connect_timeout_ms = ConnectTimeoutMS, pool_pid = self()} ]),
   MonitorRef = monitor(process, OpenerPid),
-  MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_async', MonitorRef, CallerPid, Socket, erlang:monotonic_time()}, State#state.monitor_queue),
+  MonitorQueueOut = ?MONITOR_QUEUE_ADD({'monitor_open_async', MonitorRef, OpenerPid, SocketRef, erlang:monotonic_time()}, State#state.monitor_queue),
   LifetimeTS = lifetime_ts(State),
   ConnectionOut = #connection{socket = SocketRef, lifetime_ts = LifetimeTS,
                               monitor_ref = MonitorRef, owner = OpenerPid, use_count = 0},
