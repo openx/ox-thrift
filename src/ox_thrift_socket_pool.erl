@@ -730,9 +730,10 @@ print_stats_internal (Id, LastTS, DelayTime, Repeat) ->
 
 -define(TEST_PORT, 9999).
 -define(TEST_ID, ox_thrift_test).
+-define(LOCALHOST, "localhost.").
 
 parse_options_test () ->
-  BaseState = #state{id = test, host = "localhost", port = 12345},
+  BaseState = #state{id = test, host = ?LOCALHOST, port = 12345},
   ?assertMatch(#state{connect_timeout_ms = infinity, max_age_ms = infinity, max_connections = infinity},
                parse_options([], BaseState)),
   ?assertMatch(#state{connect_timeout_ms = 42}, parse_options([ {connect_timeout_ms, 42} ], BaseState)),
@@ -753,20 +754,20 @@ choose_ip_test () ->
 lookup_ip_test () ->
   ?assertMatch({{127, 0, 0, 1}, _}, lookup_ip({127, 0, 0, 1}, undefined)),
 
-  ?assertMatch({localhost, #dns_cache{ip_addresses=undefined, next_refresh_ts=NR}} when is_integer(NR), lookup_ip(localhost, undefined)),
+  ?assertMatch({?LOCALHOST, #dns_cache{ip_addresses=undefined, next_refresh_ts=NR}} when is_integer(NR), lookup_ip(?LOCALHOST, undefined)),
   receive {'$gen_cast', U1} -> ok end,
   ?assertEqual(#dns_cache_refresh{action=update, ip_addr_list=[ {127, 0, 0, 1} ]}, U1),
 
   NowTS = erlang:monotonic_time(),
   NextTS = NowTS + erlang:convert_time_unit(?DNS_CACHE_REFRESH_SECONDS, second, native),
   D2 = #dns_cache{ip_addresses = {{1, 2, 3, 4}}, next_refresh_ts = NextTS},
+  ?assertEqual({{1, 2, 3, 4 }, D2}, lookup_ip(?LOCALHOST, D2)),
   receive U2 -> error({unexpected, U2}) after 100 -> ok end,
-  ?assertEqual({{1, 2, 3, 4 }, D2}, lookup_ip("localhost", D2)),
-  ?assertMatch({{1, 1, 1, 1}, _}, lookup_ip(localhost, D2#dns_cache{ip_addresses={{1, 1, 1, 1}, {1, 1, 1, 1}}})),
+  ?assertMatch({{1, 1, 1, 1}, _}, lookup_ip(?LOCALHOST, D2#dns_cache{ip_addresses={{1, 1, 1, 1}, {1, 1, 1, 1}}})),
 
   D3 = D2#dns_cache{next_refresh_ts = NowTS},
   ?assertMatch({{1, 2, 3, 4}, #dns_cache{next_refresh_ts=NR}} when is_integer(NR) andalso NR >= NextTS,
-               lookup_ip("localhost", D3)),
+               lookup_ip(?LOCALHOST, D3)),
   receive {'$gen_cast', U3} -> ok end,
   ?assertEqual(#dns_cache_refresh{action=update, ip_addr_list=[ {127, 0, 0, 1} ]}, U3),
 
@@ -782,12 +783,12 @@ lookup_ip_test () ->
 
 
 start_stop_test () ->
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, []}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, []}),
   ok = destroy(?TEST_ID).
 
 
 error_test () ->
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, []}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, []}),
   ?assertMatch({error, econnrefused}, checkout(?TEST_ID)),
   ok = destroy(?TEST_ID).
 
@@ -821,7 +822,7 @@ echo_echoer (Count, Sock) ->
 
 echo_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 2 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {spares_factor, 0} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {spares_factor, 0} ]}),
 
   {ok, Socket0} = checkout(?TEST_ID),
   DataOut = <<"hello">>,
@@ -877,7 +878,7 @@ echo_test () ->
 
 async_checkout_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_async_opens, ?TEST_ASYNC_OPENS} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {max_async_opens, ?TEST_ASYNC_OPENS} ]}),
 
   %% Normal async checkout; get_state uses call so we never see
   %% remaining_async_opens at less than max.
@@ -900,7 +901,7 @@ async_checkout_test () ->
 
 timeout_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0, 0 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1}, {max_connections, 2}, {spares_factor, 0} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {max_age_seconds, 1}, {max_connections, 2}, {spares_factor, 0} ]}),
 
   ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2}, get_state(?TEST_ID)),
 
@@ -943,7 +944,7 @@ timeout_test () ->
 
 spares_factor_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0, 0, 0 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_connections, 4}, {spares_factor, 42} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {max_connections, 4}, {spares_factor, 42} ]}),
 
   ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 4}, get_state(?TEST_ID)),
 
@@ -969,7 +970,7 @@ spares_factor_test () ->
 
 monitor_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {max_age_seconds, 1} ]}),
 
   %% Start a process that checks out a socket and then exits without checking
   %% it back in to ensure that the gen_server cleans up the connection.
@@ -1002,9 +1003,10 @@ monitor_bad_down_test () ->
   TId = mock_mondemand(),
 
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {max_age_seconds, 1} ]}),
 
   %% Send the pool a spurious DOWN message and see what happens.
+  io:format(user, "Expect a \"Socket not found\" error:\n", []),
   ?TEST_ID ! {'DOWN', make_ref(), process, self(), shutdown},
   timer:sleep(10),
 
@@ -1023,9 +1025,10 @@ monitor_bad_checkin_test () ->
   TId = mock_mondemand(),
 
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_age_seconds, 1} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {max_age_seconds, 1} ]}),
 
   %% Check in a socket that was not checked out and see what happens.
+  io:format(user, "Expect a \"Socket not found\" error:\n", []),
   Port = open_port({spawn, <<"cat">>}, []),
   checkin(?TEST_ID, Port, ok),
   timer:sleep(10),
@@ -1044,7 +1047,7 @@ monitor_bad_checkin_test () ->
 
 limit_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ 0, 0 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_connections, 2} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {max_connections, 2} ]}),
 
   ?assertMatch(#state{idle = 0, busy = 0, remaining_connections = 2, error_pool_full = 0}, get_state(?TEST_ID)),
   {ok, Socket0} = checkout(?TEST_ID),
@@ -1068,7 +1071,7 @@ limit_test () ->
 
 transfer_test () ->
   EchoPid = spawn(fun () -> echo(?TEST_PORT, [ -1, 1 ]) end),
-  ?TEST_ID = new({?TEST_ID, "localhost", ?TEST_PORT, [ {max_connections, 2} ]}),
+  ?TEST_ID = new({?TEST_ID, ?LOCALHOST, ?TEST_PORT, [ {max_connections, 2} ]}),
 
   {ok, Socket0} = checkout(?TEST_ID),
   ?assert(is_port(Socket0)),
