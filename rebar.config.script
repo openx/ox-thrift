@@ -1,0 +1,15 @@
+%% -*- mode: erlang -*-
+
+Config0 = CONFIG,
+
+%% Set rebar3's base_dir if the REBAR_BASE_DIR environment variable is set.
+Config1 =
+  case os:getenv("REBAR_BASE_DIR") of
+    false   -> Config0;
+    []      -> Config0;
+    BaseDir -> {ok, Cwd} = file:get_cwd(),
+               ProjectDir = filename:basename(Cwd),
+               lists:keystore(base_dir, 1, Config0, {base_dir, filename:join(BaseDir, ProjectDir)})
+  end,
+
+Config1.
