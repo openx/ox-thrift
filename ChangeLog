@@ -1,9 +1,10 @@
-* Fri Jun 14 2019 David Hull <david.hull@openx.com> 0.20.0
-- Move ox_thrift_socket_pool socket open from gen_server to client so that it
-  does not block other requests.
-- ox_thrift_socket_pool: Add checkout and open stats.
-- ox_thrift_socket_pool: Add spares_factor option to maintain idle pool.
-- ox_thrift_socket_pool: Add a simple DNS cache.
+* Mon Jan 6 2020 David Hull <david.hull@openx.com> 0.20.0
+- Improvements to ox_thrift_socket_pool:
+  * Move socket open from gen_server to client so that it does not block other
+    requests.
+  * Add checkout and open stats.
+  * Add spares_factor option to maintain idle pool.
+  * Add a simple DNS cache.
 - Add ox_thrift_shackle_client module.
 
 * Thu May 23 2019 David Hull <david.hull@openx.com> 0.19.0
