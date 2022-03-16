@@ -1,4 +1,4 @@
 [{<<"ranch">>,
   {git,"https://github.com/ninenines/ranch.git",
-       {ref,"3190aef88aea04d6dce8545fe9b4574288903f44"}},
+       {ref,"ebf216e91ef2ae54d378234062db949d95f01c0d"}},
   0}].

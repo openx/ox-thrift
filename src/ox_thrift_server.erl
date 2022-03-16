@@ -8,7 +8,7 @@
 
 -behaviour(ranch_protocol).
 
--export([ start_link/4 ]).                      % ranch_protocol behaviour.
+-export([ start_link/3 ]).                      % ranch_protocol behaviour.
 -export([ init/3 ]).
 -export([ parse_config/1, handle_request/2 ]).  % Exported for unit tests.
 
@@ -28,7 +28,7 @@
 -callback handle_error(Function::atom(), Reason::term()) -> Ignored::term().
 
 
-start_link (Ref, _Socket, Transport, Opts) ->
+start_link (Ref, Transport, Opts) ->
   Pid = spawn_link(?MODULE, init, [ Ref, Transport, Opts ]),
   {ok, Pid}.
 
@@ -171,9 +171,9 @@ handle_request2 (Config=#ts_config{protocol_module=ProtocolModule, handler_modul
           call_oneway -> %% If a oneway function returns an exception perhaps we should close the connection. @@
                          {noreply, undefined}
         end;
-      ErrorOrThrow:Reason when ErrorOrThrow =:= error; ErrorOrThrow =:= throw ->
+      ErrorOrThrow:Reason:Stacktrace when ErrorOrThrow =:= error; ErrorOrThrow =:= throw ->
         case CallType of
-          call        -> Message = ox_thrift_util:format_error_message(ErrorOrThrow, Reason),
+          call        -> Message = ox_thrift_util:format_error_message(ErrorOrThrow, Reason, Stacktrace),
                          ExceptionReply = #application_exception{message = Message, type = ?tApplicationException_UNKNOWN},
                          {encode(Config, Protocol, Function, exception, SeqId, ExceptionReply), undefined};
           call_oneway -> %% If a oneway function returns an exception perhaps we should close the connection. @@

@@ -41,7 +41,9 @@ start_server (Port, ServiceModule, ProtocolModule, HandlerModule, StatsModule, O
               options = [ {recv_timeout, 100}
                         , {stats_module, StatsModule}
                         | Options ] },
-  case ranch:start_listener(?SERVICE_REF, 2, ranch_tcp, [ {port, Port} ], ox_thrift_server, Config) of
+  TransOpts0 = ranch:normalize_opts([{port, Port}]),
+  TransOpts = TransOpts0#{num_acceptors => 2},
+  case ranch:start_listener(?SERVICE_REF, ranch_tcp, TransOpts, ox_thrift_server, Config) of
     {ok, _} -> ok;
     {error,{already_started,_}} -> ok
     end.
