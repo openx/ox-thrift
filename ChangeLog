@@ -1,3 +1,6 @@
+* Wed 25 May 2022 Kenan Gillet <kenan.gillet@openx.com> 0.21.0
+- remove support for erlang:get_stacktrace
+
 * Mon Jan 6 2020 David Hull <david.hull@openx.com> 0.20.0
 - Improvements to ox_thrift_socket_pool:
   * Move socket open from gen_server to client so that it does not block other
