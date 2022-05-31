@@ -3,15 +3,15 @@
 
 -module(ox_thrift_util).
 
--export([ format_error_message/1, format_error_message/2 ]).
+-export([ format_error_message/1, format_error_message/3 ]).
 
 -spec format_error_message(Reason::term()) -> Message::binary().
 format_error_message (Reason) ->
-  format_error_message(error, Reason).
+  format_error_message(error, Reason, no_stacktrace).
 
--spec format_error_message(Type::'error'|'throw', Reason::term()) -> Message::binary().
-format_error_message (Type, Reason) when is_atom(Type) ->
+-spec format_error_message(Type::'error'|'throw', Reason::term(), StackTrace::term()) -> Message::binary().
+format_error_message (Type, Reason, StackTrace) when is_atom(Type) ->
   case application:get_env(ox_thrift, exceptions_include_traces) of
-    {ok, true} -> list_to_binary(io_lib:format("An error occurred: ~s:~p ~9999p~n", [ Type, Reason, erlang:get_stacktrace() ]));
+    {ok, true} -> list_to_binary(io_lib:format("An error occurred: ~s:~p ~9999p~n", [ Type, Reason, StackTrace ]));
     _          -> list_to_binary(io_lib:format("An error occurred: ~s:~p", [ Type, Reason ]))
   end.
