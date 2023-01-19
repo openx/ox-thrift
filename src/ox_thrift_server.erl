@@ -245,10 +245,10 @@ encode (#ts_config{service_module=ServiceModule, stats_module=StatsModule}, Prot
 
 
 -spec detect_protocol(Buffer::binary(), Default::atom()) -> atom().
-detect_protocol (<<16#82, _/binary>>, _Default)       -> ox_thrift_protocol_compact;
-detect_protocol (<<16#80, 16#1, _/binary>>, _Default) -> ox_thrift_protocol_binary; %% binary version 1
-detect_protocol (<<0, 0, _/binary>>, _Default)        -> ox_thrift_protocol_binary; %% binary version 0
-detect_protocol (_, Default)                          -> Default.
+detect_protocol (_, Protocol) when Protocol =/= undefined -> Protocol;
+detect_protocol (<<16#82, _/binary>>, undefined)          -> ox_thrift_protocol_compact;
+detect_protocol (<<16#80, 16#1, _/binary>>, undefined)    -> ox_thrift_protocol_binary; %% binary version 1
+detect_protocol (<<0, 0, _/binary>>, undefined)           -> ox_thrift_protocol_binary. %% binary version 0
 
 
 collect_stats (undefined) -> undefined;
