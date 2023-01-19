@@ -13,11 +13,12 @@
           %% the Thrift compiler, that defines the service's structures and
           %% interfaces.
           service_module :: atom(),
-          %% The protocol module (ox_thrift_protocol_binary or
-          %% ox_thrift_protocol_compact) that specifies the default protocol
-          %% that is used to decode and encode messages.  ox_thrift_server now
-          %% automatically detects the protocol used in the incoming request
-          %% and will use that protocol to encode the reply.
+          %% The protocol module that is used to decode and encode messages.
+          %%
+          %% If unset (i.e. set to undefined) ox_thrift_server will decide between
+          %% the two defaulting (ox_thrift_protocol_binary or
+          %% ox_thrift_protocol_compact) protocols to decode the request and encode
+          %% the reply automatically based on incoming request.
           protocol_module :: atom(),
           %% The handler module that implements the ox_thrift_server behaviour
           %% to implement the service.

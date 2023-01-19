@@ -66,7 +66,8 @@ module.  This module exports two functions, `new`, and `call`.
   `gen_tcp`.  This module is expected to export `send/2`, `recv/3`,
   and `close/1` functions.
 * Protocol: A module that provides the Thrift protocol layer, e.g.,
-  `ox_thrift_protocol_binary` or `ox_thrift_protocol_compact`.
+  `ox_thrift_protocol_binary` or `ox_thrift_protocol_compact`
+  if set to `undefined`, it will try to auto detect the protocol.
 * Service: A module, produced by the Thrift IDL compiler from the
   service's Thrift definition, that provides the Service layer.
 * Options: A list of options.
