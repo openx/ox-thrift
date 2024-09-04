@@ -3,6 +3,7 @@
 
 -module(ox_thrift_shackle_client).
 
+-dialyzer(no_undefined_callbacks).
 -behaviour(shackle_client).
 
 -include("ox_thrift_internal.hrl").
