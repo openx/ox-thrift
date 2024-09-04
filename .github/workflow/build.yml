@@ -1,0 +1,32 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        erlang:
+          - 24.2
+          - 25
+          - 26
+          - 27
+
+    runs-on: ubuntu-latest
+
+    container:
+      image: erlang:${{ matrix.erlang }}
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Run tests
+      run: make test
