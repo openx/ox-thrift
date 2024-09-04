@@ -1,0 +1,20 @@
+// For more details, see https://code.visualstudio.com/docs/devcontainers/containers
+{
+    "name": "ox-thrift-build",
+    "dockerFile": "Dockerfile",
+    "mounts": [
+        {
+            "source": "${localEnv:HOME}${localEnv:USERPROFILE}/.ssh",
+            "target": "/root/.ssh",
+            "type": "bind"
+        }
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "pgourlain.erlang",
+                "ms-azuretools.vscode-docker"
+            ]
+        }
+    }
+  }
