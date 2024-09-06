@@ -229,7 +229,12 @@ all_types_test (_TestType, MapModule, NewClientFun, DestroyClientFun) ->
   {ok, Client3, Reply3} = ox_thrift_client:call(Client2, echo, [ V3 ]),
   ?assertEqual(#'AllTypes'{string_field = <<"string">>}, Reply3),
 
-  DestroyClientFun(Client3).
+  %% Pre-encoded response
+  V4 = V1#'AllTypes'{byte_field = 43},
+  {ok, Client4, Reply4} = ox_thrift_client:call(Client3, echo, [ V4 ]),
+  ?assertEqual(V4, Reply4),
+
+  DestroyClientFun(Client4).
 
 
 is_open (Client) ->
@@ -490,9 +495,6 @@ sum_ints (#'Container'{first_field=FirstInt, second_struct=SecondStruct, third_f
           end
     end,
   FirstInt + SecondSum + ThirdInt + SecondArg.
-
-echo (V) ->
-  V.
 
 simple_exception () ->
   #'SimpleException'{message = <<"hello">>, line_number = 201}.
