@@ -13,7 +13,7 @@
 -define(PORT, 8024).
 -define(SERVICE, test_service_thrift).
 -define(PROTOCOL, ox_thrift_protocol_binary).
--define(HANDLER, ox_thrift_tests).
+-define(HANDLER, ox_thrift_binary_tests).
 
 setup () ->
   %% Start the thrift server.
