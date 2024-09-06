@@ -149,6 +149,13 @@ encode_message (ServiceModule, Function, MessageType, SeqId, Args) ->
   ].
 
 
+encode (_, {ox_thrift_pre_encoded, ?THRIFT_PROTOCOL, Binary}, Acc) ->
+  %% Collect pre-encoded binary as-is
+  [ Binary | Acc ];
+
+encode (_, {ox_thrift_pre_encoded, Protocol, _}, _) ->
+  throw(lists:flatten(io_lib:format("Protocol mismatch in a pre-encoded value. '~w' is expected while '~w' was given.", [?THRIFT_PROTOCOL, Protocol])));
+
 encode ({struct, StructDef}, Data, Acc)
   when is_list(StructDef), is_tuple(Data), length(StructDef) == size(Data) - 1 ->
   %% Encode a record from a struct definition.
