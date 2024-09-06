@@ -1,8 +1,6 @@
 %% Copyright 2016-2018, OpenX.  All rights reserved.
 %% Licensed under the conditions specified in the accompanying LICENSE file.
 
--module(ox_thrift_tests).
-
 -include("ox_thrift.hrl").
 -include("test_types.hrl").
 
@@ -16,8 +14,6 @@
 -define(SERVICE, test_service_thrift).
 -define(HANDLER, ?MODULE).
 -define(STATS_MODULE, ?MODULE).
--define(STATS_TABLE, ox_thrift_stats).
--define(GLOBALS_TABLE, ox_thrift_globals).
 -define(RECV_TIMEOUT_CLIENT, 200).
 
 new_client_direct (Protocol) ->
@@ -34,7 +30,6 @@ destroy_client_direct (Client) ->
 
 -define(LOCALHOST, "127.0.0.1").
 -define(PORT, 8024).
--define(PROTOCOL, ox_thrift_protocol_binary).
 
 new_client_socket () -> new_client_socket(dict, []).
 
@@ -86,11 +81,8 @@ destroy_stats_table () ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-direct_binary_test_ () ->
-  make_tests(direct, dict, fun () -> new_client_direct(ox_thrift_protocol_binary) end, fun destroy_client_direct/1).
-
-direct_compact_test_ () ->
-  make_tests(direct, dict, fun () -> new_client_direct(ox_thrift_protocol_compact) end, fun destroy_client_direct/1).
+direct_dict_test_ () ->
+  make_tests(direct, dict, fun () -> new_client_direct(?PROTOCOL) end, fun destroy_client_direct/1).
 
 socket_dict_test_ () ->
   make_tests(socket, dict, fun () -> new_client_socket(dict, []) end, fun destroy_client_socket/1).
