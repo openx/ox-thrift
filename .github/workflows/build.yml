@@ -27,6 +27,9 @@ jobs:
       image: erlang:${{ matrix.erlang }}
 
     steps:
+    - name: Setup SSH
+      run: ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+
     - uses: actions/checkout@v3
 
     - name: Run tests
